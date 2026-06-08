@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>耗材布草/總務 — 德新行政管理平台</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+  <script src="../assets/app.js"></script>
+  <script>
+    // ========================================================================
+    // 耗材布草/總務模組 — 完整頁面邏輯
+    // ========================================================================
+
+    // ========================================================================
+    // 模組專用資料
+    // ========================================================================
+
+    const supplyData = {
+      // B5庫存表（含安全量水位）
+      inventory: [
+        {
+          sku: 'SUP-001',
+          name: '白色毛巾布',
+          category: '布草',
+          space: '7-D1-SUP-01',
+          unit: '條',
+          currentStock: 120,
+          safeLevel: 200,
+          reorderPoint: 100,
+          unitPrice: 45,
+          status: 'ok'
+        },
+        {
+          sku: 'SUP-002',
+          name: '藍色治療衣',
+          category: '布草',
+          space: '7-D1-SUP-01',
+          unit: '件',
+          currentStock: 65,
+          safeLevel: 150,
+          reorderPoint: 80,
+          unitPrice: 280,
+          status: 'warn'
+        },
+        {
+          sku: 'SUP-003',
+          name: '無塵紙巾盒',
+          category: '耗材',
+          space: '7-D1-SUP-02',
+          unit: '盒',
+          currentStock: 12,
+          safeLevel: 30,
+          reorderPoint: 20,
+          unitPrice: 120,
+          status: 'crit'
+        },
+        {
+          sku: 'SUP-004',
+          name: '醫療級棉球',
+          category: '耗材',
+          space: '7-D1-SUP-02',
+          unit: '包',
+          currentStock: 45,
+          safeLevel: 60,
+          reorderPoint: 40,
+          unitPrice: 85,
+          status: 'ok'
+        },
+        {
+          sku: 'SUP-005',
+          name: '消毒濕紙巾',
+          category: '耗材',
+          space: '7-D1-SUP-02',
+          unit: '盒',
+          currentStock: 8,
+          safeLevel: 25,
+          reorderPoint: 15,
+          unitPrice: 180,
+          status: 'crit'
+        },
+        {
+          sku: 'SUP-006',
+          name: '床單組(含枕套)',
+          category: '布草',
+          space: '7-D1-SUP-03',
+          unit: '組',
+          currentStock: 28,
+          safeLevel: 45,
+          reorderPoint: 30,
+          unitPrice: 650,
+          status: 'warn'
+        },
+        {
+          sku: 'SUP-007',
+          name: '護膚乳液',
+          category: '耗材',
+          space: '7-D2-SUP-01',
+          unit: '瓶',
+          currentStock: 18,
+          safeLevel: 35,
+          reorderPoint: 25,
+          unitPrice: 320,
+          status: 'ok'
+        },
+        {
+          sku: 'SUP-008',
+          name: '消毒酒精(500ml)',
+          category: '耗材',
+          space: '7-D2-SUP-02',
+          unit: '瓶',
+          currentStock: 6,
+          safeLevel: 20,
+          reorderPoint: 12,
+          unitPrice: 95,
+          status: 'crit'
+        }
+      ],
+
+      // 布草領用紀錄（近期交易）
+      checkouts: [
+        {
+          id: 'CHK-20260605-001',
+          sku: 'SUP-001',
+          name: '白色毛巾布',
+          qty: 15,
+          area: 'B3',
+          user: '李護士',
+          time: new Date(Date.now() - 1 * 60000),
+          remark: '物理治療室補充'
+        },
+        {
+          id: 'CHK-20260605-002',
+          sku: 'SUP-004',
+          name: '醫療級棉球',
+          qty: 3,
+          area: 'A2',
+          user: '王醫生',
+          time: new Date(Date.now() - 8 * 60000),
+          remark: '診間急用'
+        },
+        {
+          id: 'CHK-20260605-003',
+          sku: 'SUP-002',
+          name: '藍色治療衣',
+          qty: 5,
+          area: 'B3',
+          user: '陳助理',
+          time: new Date(Date.now() - 35 * 60000),
+          remark: '定期更換'
+        },
+        {
+          id: 'CHK-20260605-004',
+          sku: 'SUP-007',
+          name: '護膚乳液',
+          qty: 1,
+          area: 'E2',
+          user: '徐收納',
+          time: new Date(Date.now() - 2 * 3600000),
+          remark: '冰敷室補充'
+        },
+        {
+          id: 'CHK-20260604-005',
+          sku: 'SUP-006',
+          name: '床單組(含枕套)',
+          qty: 2,
+          area: 'C1',
+          user: '周主管',
+          time: new Date(Date.now() - 24 * 3600000),
+          remark: '日常更新'
+        }
+      ],
+
+      // 採購建議（低於安全量自動偵測）
+      purchaseRequests: [
+        {
+          id: 'PR-20260605-001',
+          sku: 'SUP-003',
+          name: '無塵紙巾盒',
+          currentStock: 12,
+          safeLevel: 30,
+          suggestQty: 40,
+          estimatedCost: 4800,
+          status: 'pending',
+          createdTime: new Date(Date.now() - 15 * 60000),
+          priority: 'crit'
+        },
+        {
+          id: 'PR-20260605-002',
+          sku: 'SUP-008',
+          name: '消毒酒精(500ml)',
+          currentStock: 6,
+          safeLevel: 20,
+          suggestQty: 30,
+          estimatedCost: 2850,
+          status: 'pending',
+          createdTime: new Date(Date.now() - 10 * 60000),
+          priority: 'crit'
+        },
+        {
+          id: 'PR-20260604-003',
+          sku: 'SUP-002',
+          name: '藍色治療衣',
+          currentStock: 65,
+          safeLevel: 150,
+          suggestQty: 100,
+          estimatedCost: 28000,
+          status: 'pending',
+          createdTime: new Date(Date.now() - 2 * 3600000),
+          priority: 'warn'
+        },
+        {
+          id: 'PR-20260603-004',
+          sku: 'SUP-006',
+          name: '床單組(含枕套)',
+          currentStock: 28,
+          safeLevel: 45,
+          suggestQty: 35,
+          estimatedCost: 22750,
+          status: 'confirmed',
+          confirmedBy: '黃主任',
+          confirmedTime: new Date(Date.now() - 3 * 3600000),
+          priority: 'warn'
+        }
+      ],
+
+      // 詢價彙整（供應商報價）
+      quotations: [
+        {
+          id: 'QT-20260605-01',
+          sku: 'SUP-003',
+          name: '無塵紙巾盒',
+          supplier: '聯豐紙業',
+          qty: 40,
+          unitPrice: 115,
+          totalPrice: 4600,
+          deliveryDays: 3,
+          validUntil: new Date(Date.now() + 7 * 24 * 3600000),
+          contact: '李副理 (02)2345-6789',
+          status: 'quoted'
+        },
+        {
+          id: 'QT-20260605-02',
+          sku: 'SUP-003',
+          name: '無塵紙巾盒',
+          supplier: '民生商行',
+          qty: 40,
+          unitPrice: 125,
+          totalPrice: 5000,
+          deliveryDays: 2,
+          validUntil: new Date(Date.now() + 5 * 24 * 3600000),
+          contact: '王經理 (02)8765-4321',
+          status: 'quoted'
+        },
+        {
+          id: 'QT-20260604-03',
+          sku: 'SUP-008',
+          name: '消毒酒精(500ml)',
+          supplier: '康泰衛材',
+          qty: 30,
+          unitPrice: 92,
+          totalPrice: 2760,
+          deliveryDays: 4,
+          validUntil: new Date(Date.now() + 10 * 24 * 3600000),
+          contact: '陳采購 (03)4567-8901',
+          status: 'quoted'
+        },
+        {
+          id: 'QT-20260604-04',
+          sku: 'SUP-002',
+          name: '藍色治療衣',
+          supplier: '優質製衣',
+          qty: 100,
+          unitPrice: 265,
+          totalPrice: 26500,
+          deliveryDays: 7,
+          validUntil: new Date(Date.now() + 14 * 24 * 3600000),
+          contact: '何業務 (04)2222-3333',
+          status: 'quoted'
+        }
+      ],
+
+      // 月耗用趨勢（近6個月）
+      monthlyTrend: [
+        { month: '1月', consumption: 320 },
+        { month: '2月', consumption: 340 },
+        { month: '3月', consumption: 315 },
+        { month: '4月', consumption: 380 },
+        { month: '5月', consumption: 420 },
+        { month: '6月', consumption: 410 }
+      ]
+    };
+
+    // ========================================================================
+    // Tab 切換邏輯與互動
+    // ========================================================================
+
+    let activeTab = 'inventory';
+
+    function switchTab(tabKey) {
+      activeTab = tabKey;
+      renderContent();
+    }
+
+    function confirmPurchase(prId) {
+      const pr = supplyData.purchaseRequests.find(p => p.id === prId);
+      if (!pr) return;
+
+      FM.showModal(
+        '確認採購申請',
+        `<p>確認以下採購申請？</p>
+         <div class="card">
+           <div class="card-body">
+             <p><strong>${pr.name}</strong></p>
+             <p>建議數量: ${pr.suggestQty} ${supplyData.inventory.find(i => i.sku === pr.sku)?.unit}</p>
+             <p>預估金額: NT$ ${pr.estimatedCost.toLocaleString()}</p>
+           </div>
+         </div>`,
+        [
+          {
+            label: '確認採購',
+            type: 'success',
+            onclick: `supplyConfirmPurchase('${prId}')`
+          },
+          {
+            label: '稍後決定',
+            type: 'secondary',
+            onclick: 'FM.closeModal()'
+          }
+        ]
+      );
+    }
+
+    function supplyConfirmPurchase(prId) {
+      const pr = supplyData.purchaseRequests.find(p => p.id === prId);
+      if (pr) {
+        pr.status = 'confirmed';
+        pr.confirmedBy = '使用者';
+        pr.confirmedTime = new Date();
+        FM.closeModal();
+        renderContent();
+      }
+    }
+
+    // ========================================================================
+    // 內容渲染函式
+    // ========================================================================
+
+    function renderContent() {
+      let html = '';
+
+      // ─────────────────────────────────────────────────────────────────────
+      // Tab 導覽列
+      // ─────────────────────────────────────────────────────────────────────
+
+      html += `
+        <div class="card mb-4">
+          <div class="card-body" style="display: flex; gap: 12px; flex-wrap: wrap;">
+            <button class="btn ${activeTab === 'inventory' ? 'btn-primary' : 'btn-secondary'}"
+                    onclick="switchTab('inventory')">📦 庫存表</button>
+            <button class="btn ${activeTab === 'checkouts' ? 'btn-primary' : 'btn-secondary'}"
+                    onclick="switchTab('checkouts')">🔍 領用紀錄</button>
+            <button class="btn ${activeTab === 'purchase' ? 'btn-primary' : 'btn-secondary'}"
+                    onclick="switchTab('purchase')">🛒 採購申請</button>
+            <button class="btn ${activeTab === 'quotation' ? 'btn-primary' : 'btn-secondary'}"
+                    onclick="switchTab('quotation')">💰 詢價彙整</button>
+            <button class="btn ${activeTab === 'trend' ? 'btn-primary' : 'btn-secondary'}"
+                    onclick="switchTab('trend')">📈 耗用趨勢</button>
+          </div>
+        </div>
+      `;
+
+      // ─────────────────────────────────────────────────────────────────────
+      // 庫存表 Tab
+      // ─────────────────────────────────────────────────────────────────────
+
+      if (activeTab === 'inventory') {
+        // KPI 卡片
+        const critCount = supplyData.inventory.filter(i => i.status === 'crit').length;
+        const warnCount = supplyData.inventory.filter(i => i.status === 'warn').length;
+        const okCount = supplyData.inventory.filter(i => i.status === 'ok').length;
+
+        html += `
+          <div class="grid grid-cols-3 mb-4">
+            <div class="kpi success">
+              <div>
+                <div class="kpi-label">正常庫存</div>
+                <div class="kpi-value">${okCount}</div>
+              </div>
+              <div class="kpi-icon">✓</div>
+            </div>
+            <div class="kpi warning">
+              <div>
+                <div class="kpi-label">低於安全量</div>
+                <div class="kpi-value">${warnCount}</div>
+              </div>
+              <div class="kpi-icon">⚠</div>
+            </div>
+            <div class="kpi danger">
+              <div>
+                <div class="kpi-label">需立即採購</div>
+                <div class="kpi-value">${critCount}</div>
+              </div>
+              <div class="kpi-icon">🚨</div>
+            </div>
+          </div>
+        `;
+
+        // 庫存表格
+        html += `<div class="section-title">B5庫存表與安全量水位</div>`;
+
+        const tableRows = supplyData.inventory.map(item => {
+          const stockPct = (item.currentStock / item.safeLevel) * 100;
+          const progColor = item.status === 'ok' ? 'success' : item.status === 'warn' ? 'warning' : 'danger';
+          const badgeClass = item.status === 'ok' ? 'ok' : item.status === 'warn' ? 'warn' : 'crit';
+
+          return [
+            item.sku,
+            item.name,
+            FM.spaceTag(item.space),
+            `${item.currentStock}/${item.safeLevel}<br/>
+             <div class="progress" style="margin: 4px 0; width: 100%;">
+               <div class="progress-bar ${progColor}" style="width: ${Math.min(stockPct, 100)}%;"></div>
+             </div>`,
+            `${item.currentStock} ${item.unit}`,
+            `NT$ ${item.unitPrice}`,
+            FM.statusBadge(badgeClass)
+          ];
+        });
+
+        html += FM.createTable(
+          ['SKU', '品名', '儲位', '安全量水位', '現存', '單價', '狀態'],
+          tableRows,
+          { alertRows: supplyData.inventory.map((_, i) => supplyData.inventory[i].status !== 'ok' ? i : -1).filter(i => i >= 0) }
+        );
+      }
+
+      // ─────────────────────────────────────────────────────────────────────
+      // 布草領用紀錄 Tab
+      // ─────────────────────────────────────────────────────────────────────
+
+      else if (activeTab === 'checkouts') {
+        html += `<div class="section-title">近期布草領用紀錄</div>`;
+
+        const checkoutRows = supplyData.checkouts.map(ck => {
+          const item = supplyData.inventory.find(i => i.sku === ck.sku);
+          return [
+            ck.id,
+            ck.name,
+            `${ck.qty} ${item?.unit || '件'}`,
+            `${ck.area}區`,
+            ck.user,
+            FM.timeAgo(ck.time),
+            ck.remark
+          ];
+        });
+
+        html += FM.createTable(
+          ['紀錄ID', '品名', '數量', '領用區域', '領用人', '時間', '備註'],
+          checkoutRows
+        );
+      }
+
+      // ─────────────────────────────────────────────────────────────────────
+      // 採購申請 Tab
+      // ─────────────────────────────────────────────────────────────────────
+
+      else if (activeTab === 'purchase') {
+        const pending = supplyData.purchaseRequests.filter(p => p.status === 'pending');
+        const confirmed = supplyData.purchaseRequests.filter(p => p.status === 'confirmed');
+
+        // 待確認
+        if (pending.length > 0) {
+          html += `<div class="section-title">待人工確認 (${pending.length})</div>`;
+          pending.forEach(pr => {
+            const item = supplyData.inventory.find(i => i.sku === pr.sku);
+            const badgeClass = pr.priority === 'crit' ? 'crit' : 'warn';
+            html += `
+              <div class="card">
+                <div class="card-header flex-between">
+                  <div>
+                    <strong>${pr.name}</strong>
+                    <span class="badge ${badgeClass}" style="margin-left: 8px;">${pr.priority === 'crit' ? '🚨 緊急' : '⚠️ 一般'}</span>
+                  </div>
+                  <span class="text-muted text-sm">${FM.timeAgo(pr.createdTime)}</span>
+                </div>
+                <div class="card-body">
+                  <div class="grid grid-cols-2 gap-2" style="margin-bottom: 12px;">
+                    <div>
+                      <span class="text-muted text-sm">現存</span><br/>
+                      <strong class="text-lg">${pr.currentStock}</strong> / ${pr.safeLevel}
+                    </div>
+                    <div>
+                      <span class="text-muted text-sm">建議採購量</span><br/>
+                      <strong class="text-lg">${pr.suggestQty} ${item?.unit}</strong>
+                    </div>
+                    <div>
+                      <span class="text-muted text-sm">預估金額</span><br/>
+                      <strong class="text-lg">NT$ ${pr.estimatedCost.toLocaleString()}</strong>
+                    </div>
+                    <div>
+                      <span class="text-muted text-sm">儲位</span><br/>
+                      <strong>${item?.space}</strong>
+                    </div>
+                  </div>
+                  <button class="btn btn-primary btn-small" onclick="confirmPurchase('${pr.id}')">
+                    ✓ 確認採購
+                  </button>
+                </div>
+              </div>
+            `;
+          });
+        }
+
+        // 已確認
+        if (confirmed.length > 0) {
+          html += `<div class="section-title" style="margin-top: 24px;">已確認 (${confirmed.length})</div>`;
+          confirmed.forEach(pr => {
+            const item = supplyData.inventory.find(i => i.sku === pr.sku);
+            html += `
+              <div class="card" style="opacity: 0.8;">
+                <div class="card-header flex-between">
+                  <div>
+                    <strong>${pr.name}</strong>
+                    <span class="badge ok" style="margin-left: 8px;">✓ 已確認</span>
+                  </div>
+                  <span class="text-muted text-sm">${FM.timeAgo(pr.confirmedTime)}</span>
+                </div>
+                <div class="card-body text-muted text-sm">
+                  確認人: <strong>${pr.confirmedBy}</strong> |
+                  數量: <strong>${pr.suggestQty} ${item?.unit}</strong> |
+                  金額: <strong>NT$ ${pr.estimatedCost.toLocaleString()}</strong>
+                </div>
+              </div>
+            `;
+          });
+        }
+      }
+
+      // ─────────────────────────────────────────────────────────────────────
+      // 詢價彙整 Tab
+      // ─────────────────────────────────────────────────────────────────────
+
+      else if (activeTab === 'quotation') {
+        html += `<div class="section-title">供應商報價彙整</div>`;
+
+        // 按 SKU 分組
+        const grouped = {};
+        supplyData.quotations.forEach(q => {
+          if (!grouped[q.sku]) grouped[q.sku] = [];
+          grouped[q.sku].push(q);
+        });
+
+        Object.keys(grouped).forEach(sku => {
+          const quotes = grouped[sku];
+          const minPrice = Math.min(...quotes.map(q => q.unitPrice));
+
+          html += `
+            <div class="card">
+              <div class="card-header">
+                <strong>${quotes[0].name}</strong>
+                <span class="text-muted text-sm">(SKU: ${sku})</span>
+              </div>
+              <div class="card-body">
+                <table class="dtable" style="margin-top: 12px;">
+                  <thead>
+                    <tr>
+                      <th>供應商</th>
+                      <th>數量</th>
+                      <th>單價</th>
+                      <th>合計</th>
+                      <th>交期</th>
+                      <th>有效期</th>
+                      <th>聯繫</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+          `;
+
+          quotes.forEach(q => {
+            const isBest = q.unitPrice === minPrice ? 'alert-row' : '';
+            html += `
+              <tr class="${isBest}">
+                <td><strong>${q.supplier}</strong></td>
+                <td>${q.qty}</td>
+                <td class="${q.unitPrice === minPrice ? 'text-success font-bold' : ''}">NT$ ${q.unitPrice}</td>
+                <td>NT$ ${q.totalPrice.toLocaleString()}</td>
+                <td>${q.deliveryDays} 天</td>
+                <td class="text-muted text-sm">${new Date(q.validUntil).toLocaleDateString('zh-TW')}</td>
+                <td class="text-sm">${q.contact}</td>
+              </tr>
+            `;
+          });
+
+          html += `
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          `;
+        });
+      }
+
+      // ─────────────────────────────────────────────────────────────────────
+      // 耗用趨勢 Tab
+      // ─────────────────────────────────────────────────────────────────────
+
+      else if (activeTab === 'trend') {
+        html += `<div class="section-title">月耗用趨勢 (近6個月)</div>`;
+
+        // 折線圖
+        const trendData = supplyData.monthlyTrend.map(m => m.consumption);
+        const svgLine = FM.svgLine([
+          { label: '耗用量(件)', data: trendData, color: '#008CD6' }
+        ]);
+
+        html += `
+          <div class="card">
+            <div class="card-body">
+              <div class="svg-container">
+                ${svgLine}
+              </div>
+              <div style="margin-top: 20px;">
+                <table class="dtable">
+                  <thead>
+                    <tr>
+                      <th>月份</th>
+                      <th>耗用量</th>
+                      <th>月均</th>
+                      <th>趨勢</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+        `;
+
+        supplyData.monthlyTrend.forEach((m, i) => {
+          const trend = i === 0 ? '——' : m.consumption > supplyData.monthlyTrend[i - 1].consumption ? '↑ 上升' : '↓ 下降';
+          const avgMonthly = Math.round(trendData.reduce((a, b) => a + b) / trendData.length);
+
+          html += `
+            <tr>
+              <td><strong>${m.month}</strong></td>
+              <td>${m.consumption}</td>
+              <td class="text-muted">${avgMonthly}</td>
+              <td class="text-sm">${trend}</td>
+            </tr>
+          `;
+        });
+
+        const avgConsumption = Math.round(trendData.reduce((a, b) => a + b) / trendData.length);
+        html += `
+                  </tbody>
+                </table>
+
+                <div class="grid grid-cols-2 gap-3" style="margin-top: 20px;">
+                  <div class="kpi info">
+                    <div>
+                      <div class="kpi-label">月均耗用</div>
+                      <div class="kpi-value">${avgConsumption}</div>
+                      <div class="kpi-unit">件/月</div>
+                    </div>
+                  </div>
+                  <div class="kpi ${supplyData.monthlyTrend[5].consumption > supplyData.monthlyTrend[4].consumption ? 'warning' : 'success'}">
+                    <div>
+                      <div class="kpi-label">本月趨勢</div>
+                      <div class="kpi-value">${supplyData.monthlyTrend[5].consumption}</div>
+                      <div class="kpi-unit">${supplyData.monthlyTrend[5].consumption > supplyData.monthlyTrend[4].consumption ? '↑ 上升' : '↓ 下降'}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      // 載入內容
+      FM.loadContent(html);
+    }
+
+    // ========================================================================
+    // 初始化頁面
+    // ========================================================================
+
+    // 直接調用（不依賴 DOMContentLoaded），沿用 index.html 架構風格
+    FM.renderShell('supplies', '耗材布草/總務');
+    renderContent();
+  </script>
+</body>
+</html>

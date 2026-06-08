@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>同仁回報 · 接收端 — 德新行政管理平台</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <style>
+    .timeline { border-left:2px solid #e3e8ef; padding-left:16px; margin-left:6px; }
+    .timeline .tl { position:relative; margin-bottom:10px; font-size:13px; }
+    .timeline .tl::before { content:''; position:absolute; left:-23px; top:3px; width:12px; height:12px; border-radius:50%; background:#008CD6; border:2px solid #fff; }
+    .srcbar { background:#eef4fb; border:1px solid #d3e3f5; border-radius:10px; padding:12px 15px; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-bottom:16px; }
+  </style>
+</head>
+<body>
+  <div id="fm-shell"></div>
+  <div id="fm-content"></div>
+  <script src="../assets/app.js"></script>
+  <script>
+    FM.renderShell('report', '同仁回報 · 接收端');
+
+    const cats = [
+      { k:'clean', nm:'清潔', ic:'🧹', team:'清潔組' }, { k:'fix', nm:'維修', ic:'🔧', team:'工務組' },
+      { k:'sec', nm:'保全', ic:'🛡️', team:'保全組' }, { k:'hvac', nm:'空調', ic:'❄️', team:'機電組' },
+      { k:'power', nm:'電力照明', ic:'💡', team:'機電組' }, { k:'water', nm:'給排水', ic:'🚿', team:'工務組' },
+      { k:'it', nm:'資訊網路', ic:'🖥️', team:'資訊組' }, { k:'med', nm:'醫療儀器', ic:'🩺', team:'醫工組' },
+      { k:'supply', nm:'耗材備品', ic:'📦', team:'總務組' }, { k:'env', nm:'環境/感染', ic:'🦠', team:'感管組' },
+      { k:'safe', nm:'安全設施', ic:'⚠️', team:'安全組' }, { k:'fire', nm:'消防', ic:'🧯', team:'消防權責' },
+      { k:'other', nm:'其他/建議', ic:'💬', team:'總務組' },
+    ];
+    const KEY = 'fm_staff_reports';
+    const statusMap = { new:{l:'待研判',b:'warn'}, doing:{l:'處理中',b:'info'}, done:{l:'已完成',b:'ok'}, returned:{l:'已退回',b:'crit'} };
+
+    // ===== 資料層：委派 app.js 集中管理（與獨立同仁 App、主管台共用） =====
+    function loadReports(){ return FM.loadReports(); }
+    function saveReports(arr){ FM.saveReports(arr); }
+    let reports = loadReports();
+    let tab='inbox';
+
+    function refresh(){ reports = loadReports(); render(); FM.toast('已重新整理收件匣','ok'); }
+    function toggleAuto(){ FM.autoMode = !FM.autoMode; FM.toast('Hermes 自動分流：'+(FM.autoMode?'開啟':'關閉'), FM.autoMode?'ok':'warn'); render(); }
+
+    function render(){
+      const autoN = FM.reportAutoProcess();
+      reports = loadReports();
+      const nw = reports.filter(r=>r.status==='new').length;
+      const dg = reports.filter(r=>r.status==='doing').length;
+      const dn = reports.filter(r=>r.status==='done').length;
+      let h=`
+        <div class="srcbar">
+          <div style="font-size:13px;color:#0054A7;"><strong>📥 接收端</strong>　Hermes 自動分流低風險例行案，其餘交主管裁決。</div>
+          <div>
+            <button class="btn btn-small" style="background:${FM.autoMode?'#00A94F':'#bbb'};color:#fff;" onclick="toggleAuto()">🤖 自動分流：${FM.autoMode?'開':'關'}</button>
+            <button class="btn btn-secondary btn-small" onclick="refresh()">🔄 重新整理</button>
+            <button class="btn btn-primary btn-small" onclick="openApp()">📱 同仁 App</button>
+          </div>
+        </div>
+        <div class="grid grid-cols-4 gap-3 mb-4">
+          <div class="kpi warning"><div class="kpi-icon">📨</div><div class="kpi-value">${nw}</div><div class="kpi-unit">件</div><div class="kpi-label">待受理</div></div>
+          <div class="kpi"><div class="kpi-icon">🔧</div><div class="kpi-value">${dg}</div><div class="kpi-unit">件</div><div class="kpi-label">處理中</div></div>
+          <div class="kpi success"><div class="kpi-icon">✓</div><div class="kpi-value">${dn}</div><div class="kpi-unit">件</div><div class="kpi-label">已結案</div></div>
+          <div class="kpi"><div class="kpi-icon">📋</div><div class="kpi-value">${reports.length}</div><div class="kpi-unit">件</div><div class="kpi-label">累計回報</div></div>
+        </div>
+        <div class="card mb-4"><div class="card-header"><div style="display:flex;gap:8px;border-bottom:2px solid #f5f5f5;flex-wrap:wrap;">
+          <button class="tab-btn ${tab==='inbox'?'active':''}" onclick="sw('inbox')">📥 收件匣 (${nw+dg})</button>
+          <button class="tab-btn ${tab==='done'?'active':''}" onclick="sw('done')">✅ 已結案 (${dn})</button>
+          <button class="tab-btn ${tab==='stat'?'active':''}" onclick="sw('stat')">📊 統計分析</button>
+          <button class="tab-btn ${tab==='contacts'?'active':''}" onclick="sw('contacts')">📞 即時聯絡</button>
+        </div></div><div class="card-body">${content()}</div></div>`;
+      FM.loadContent(h);
+    }
+    function content(){ if(tab==='inbox')return listTab(['new','doing','returned']); if(tab==='done')return listTab(['done']); if(tab==='contacts')return contactsTab(); return stat(); }
+    function contactsTab(){ return '<div class="mb-3"><h3 class="section-title">保全 / 德新人員即時聯絡</h3></div>' + FM.renderContacts(); }
+
+    function listTab(statuses){
+      const rows = reports.filter(r=>statuses.includes(r.status));
+      if(!rows.length) return '<div style="text-align:center;padding:40px;color:#999;">'+(statuses.includes('done')?'尚無已結案項目':'收件匣清空，無待處理回報 🎉')+'</div>';
+      let h='';
+      rows.forEach(r=>{
+        const c=cats.find(x=>x.k===r.cat)||{ic:'❓',nm:r.cat};
+        const s=statusMap[r.status];
+        h+=`<div class="card mb-3"><div class="card-body">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;">
+            <div style="flex:1;min-width:240px;">
+              <span style="font-size:20px;">${c.ic}</span> <strong>${r.id}</strong>
+              <span class="badge ${r.urgent?'crit':'info'}">${r.urgent?'緊急':'一般'}</span>
+              <span class="badge ${s.b}">${s.l}</span>
+              ${r.device&&r.device!=='SEED'?'<span class="badge ok">📱 App 新進</span>':''}
+              ${r.autoBy==='hermes'?'<span class="badge ok">🤖 Hermes 自動派工</span>':''}
+              <div style="margin-top:6px;">[${c.nm}] ${r.loc} · <span class="text-muted">回報人 ${r.by} · ${FM.timeAgo(r.time)}</span></div>
+              <div style="margin-top:4px;">${r.desc}</div>
+              <div class="text-muted text-sm" style="margin-top:4px;">權責：${r.assignee}</div>
+            </div>
+            <div style="text-align:right;">
+              ${r.status==='doing'?`<button class="btn btn-primary btn-small" onclick="complete('${r.id}')">標記完成</button><br><button class="btn btn-secondary btn-small" style="margin-top:4px;" onclick="pushLine('${r.id}')">推 LINE</button>`:r.status==='done'?'<span class="badge ok">✓ 已結案</span>':''}
+            </div>
+          </div>
+          ${(r.status==='new'||r.status==='returned')?triagePanel(r):''}
+          <div class="timeline" style="margin-top:12px;">${(r.tl||[]).map(t=>`<div class="tl">${t[0]} <span class="text-muted text-sm">· ${FM.timeAgo(t[1])}</span></div>`).join('')}</div>
+        </div></div>`;
+      });
+      return h;
+    }
+    // Hermes 研判面板（AI 初判 → 提供主管決策）
+    function triagePanel(r){
+      const t = FM.hermesTriage(r);
+      const c = cats.find(x=>x.k===r.cat)||{nm:r.cat};
+      const fc = cats.find(x=>x.k===t.finalCat)||{nm:t.finalCat};
+      const sevBadge = t.severity==='緊急'?'<span class="badge crit">緊急</span>':'<span class="badge info">一般</span>';
+      return `<div style="margin-top:12px;background:#f3f8ff;border:1px solid #d3e3f5;border-radius:10px;padding:13px 15px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><span style="font-size:18px;">🤖</span><strong style="color:#0054A7;">Hermes 初步研判</strong><span class="text-muted text-sm">信心 ${t.confidence}</span></div>
+        <div style="font-size:13px;line-height:1.9;">
+          <div>研判嚴重度：${sevBadge} ${t.severity}</div>
+          <div>類別確認：${t.reclass?`建議改類 <strong>${c.nm} → ${fc.nm}</strong>（${t.reclassReason}）`:`<strong>${c.nm}</strong> 正確`}</div>
+          <div>建議權責：<strong>${t.team}</strong>${t.contact?` · 工務機 ${t.contact.ext}${t.contact.phone?'（'+t.contact.phone+'）':''}`:''}</div>
+          <div>建議時限：${t.sla}</div>
+          <div>建議推播：${t.pushTargets.map(k=>(FM.lineGroups.find(g=>g.key===k)||{}).name).join('、')}</div>
+          <div>風險提示：${t.risk}</div>
+          <div style="margin-top:6px;padding:7px 10px;background:#e6f7ee;border-radius:6px;color:#1A7A4A;">建議處置流程：${t.sop.map((s,i)=>`${i+1}. ${s}`).join('　')}</div>
+        </div>
+        <div style="margin-top:10px;border-top:1px dashed #cdddef;padding-top:10px;">
+          <span class="text-muted text-sm">👤 主管裁決：</span>
+          <button class="btn btn-primary btn-small" onclick="takeTriage('${r.id}')">✅ 採納並派工</button>
+          <button class="btn btn-secondary btn-small" onclick="adjust('${r.id}')">✏️ 調整</button>
+          <button class="btn btn-danger btn-small" onclick="reject('${r.id}')">↩️ 退回補件</button>
+        </div>
+      </div>`;
+    }
+    function takeTriage(id){ const t=FM.reportTake(id); render(); if(t) FM.toast('已採納研判並派 '+t.team,'ok'); }
+    function adjust(id){
+      const r = loadReports().find(x=>x.id===id); if(!r) return;
+      const t = FM.hermesTriage(r);
+      const team = window.prompt('調整權責組別（Hermes 建議：'+t.team+'）：', t.team);
+      if(team===null) return;
+      FM.reportAdjust(id, team.trim()||t.team); render(); FM.toast('已調整派工','info');
+    }
+    function reject(id){
+      const reason = window.prompt('退回原因（將回覆同仁補件）：','資訊不足，請補充發生位置與時間');
+      if(reason===null) return;
+      FM.reportReject(id, reason.trim()); render(); FM.toast('已退回並通知同仁','warn');
+    }
+    function complete(id){ FM.reportComplete(id); render(); FM.toast('已結案並回報 LINE','ok'); }
+    function pushLine(id){
+      const r = reports.find(x=>x.id===id); if(!r) return;
+      const c=cats.find(x=>x.k===r.cat)||{nm:r.cat};
+      FM.pushLineByAlert({ level:r.urgent?'crit':'warn', space:'7-'+r.loc.charAt(0)+'0-RPT-01', msg:`同仁回報 ${id}[${c.nm}]：${r.desc}`, aiAction:`派 ${r.assignee} 處理` });
+    }
+    function openApp(){
+      // 獨立同仁回報 App（與本平台同層的 staff-report-app）
+      FM.showModal('同仁回報 App',
+        `<p>獨立的同仁填報 App 路徑：</p>
+         <p style="margin:8px 0;padding:8px;background:#f5f5f5;border-radius:4px;font-family:monospace;font-size:12px;word-break:break-all;">../../staff-report-app/index.html</p>
+         <p style="color:#666;font-size:13px;">同仁以手機開啟該 App 填報後，回報會即時出現在此收件匣（同一瀏覽器 / 同源時自動同步；正式版改由後端 API 同步）。</p>`,
+        [
+          { label:'嘗試開啟', type:'primary', onclick:"window.open('../../staff-report-app/index.html','_blank'); FM.closeModal();" },
+          { label:'關閉', type:'secondary', onclick:'FM.closeModal();' }
+        ]);
+    }
+    function stat(){
+      const byCat={}; reports.forEach(r=>byCat[r.cat]=(byCat[r.cat]||0)+1);
+      const barData=Object.keys(byCat).map(k=>({label:(cats.find(c=>c.k===k)||{nm:k}).nm, value:byCat[k]}));
+      let h='<div class="mb-3"><h3 class="section-title">回報類別分布</h3></div>';
+      h+=`<div style="text-align:center;margin-bottom:18px;">${FM.svgBar(barData,{width:460,height:220,color:'#008CD6'})}</div>`;
+      h+='<div class="mb-3"><h3 class="section-title">處理狀態</h3></div><div class="grid grid-cols-3 gap-3" style="--responsive-cols:auto;">';
+      ['new','doing','done'].forEach(st=>{ const n=reports.filter(r=>r.status===st).length; const m=statusMap[st];
+        h+=`<div class="card"><div class="card-body" style="text-align:center;"><div style="font-size:30px;font-weight:800;color:#0054A7;">${n}</div><span class="badge ${m.b}">${m.l}</span></div></div>`;});
+      h+='</div><div class="text-muted text-sm" style="margin-top:14px;">＊回報來源為獨立同仁 App；資料可回饋「報修派工中控」統一指派，並由 Hermes 分析高頻問題類別／地點，提出預防性維護建議。</div>';
+      return h;
+    }
+    function sw(t){tab=t;render();}
+    render();
+  </script>
+</body>
+</html>

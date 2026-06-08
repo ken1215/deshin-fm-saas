@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>即時在線人員管理 — 德新行政管理平台</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+  <div id="fm-shell"></div>
+  <div id="fm-content"></div>
+  <script src="../assets/app.js"></script>
+  <script>
+    FM.renderShell('staff', '即時在線人員管理');
+
+    const stf = {
+      people: [
+        { id:'D01', name:'張醫師', role:'醫師', zone:'A', code:'7-A3-STF-01', status:'on', in:'08:30', note:'看診中' },
+        { id:'P01', name:'李治療師', role:'物理治療師', zone:'B', code:'7-B2-STF-02', status:'on', in:'08:45', note:'徒手治療' },
+        { id:'P02', name:'王治療師', role:'物理治療師', zone:'B', code:'7-B3-STF-03', status:'on', in:'08:50', note:'震波' },
+        { id:'N01', name:'陳護理師', role:'護理師', zone:'A', code:'7-A1-STF-04', status:'on', in:'08:20', note:'量測' },
+        { id:'N02', name:'林護理師', role:'護理師', zone:'B', code:'7-B1-STF-05', status:'break', in:'08:25', note:'休息' },
+        { id:'R01', name:'吳櫃台', role:'櫃台行政', zone:'A', code:'7-A1-STF-06', status:'on', in:'08:10', note:'報到' },
+        { id:'T01', name:'黃運醫師', role:'運醫老師', zone:'C', code:'7-C1-STF-07', status:'on', in:'09:00', note:'團課' },
+        { id:'S01', name:'林志明', role:'保全', zone:'A', code:'7-A1-STF-08', status:'on', in:'06:52', note:'大廳崗' },
+        { id:'C01', name:'劉清潔', role:'清潔', zone:'E', code:'7-E1-STF-09', status:'on', in:'07:30', note:'例行清潔' },
+        { id:'P03', name:'周治療師', role:'物理治療師', zone:'C', code:'7-C2-STF-10', status:'overtime', in:'昨22:00', note:'連續12hr' },
+      ],
+      roles: ['醫師','物理治療師','護理師','櫃台行政','運醫老師','保全','清潔'],
+      zones: { A:'接待門診', B:'物理治療', C:'運動訓練', D:'後勤行政', E:'輔助設施' },
+      log: [
+        { name:'張醫師', act:'簽到', time:'08:30', code:'7-A3' },
+        { name:'李治療師', act:'簽到', time:'08:45', code:'7-B2' },
+        { name:'林護理師', act:'外出(休息)', time:'11:20', code:'7-B1' },
+        { name:'周治療師', act:'逾時未簽退', time:'—', code:'7-C2' },
+      ],
+      alerts: [
+        { id:'STF-A001', level:'warn', code:'7-C2-STF-10', name:'人員連續工時超時', msg:'周治療師已連續在勤 12 小時（昨 22:00 至今），超過勞安建議工時', time:Date.now()-300000, aiAction:'AI建議：安排換班並通知主管，避免疲勞作業', confirmed:false },
+      ],
+    };
+    FM.alerts = FM.alerts.concat(stf.alerts.map(a=>({id:a.id,level:a.level,space:a.code,time:new Date(a.time),system:'STF',msg:a.name+'：'+a.msg,aiAction:a.aiAction,needConfirm:false,confirmed:a.confirmed})));
+
+    let tab='live';
+    const onSite = stf.people.filter(p=>p.status!=='off');
+    function render(){
+      let h=`
+        <div class="grid grid-cols-4 gap-3 mb-4">
+          <div class="kpi success"><div class="kpi-icon">🧑‍⚕️</div><div class="kpi-value">${onSite.length}</div><div class="kpi-unit">人</div><div class="kpi-label">即時在線</div></div>
+          <div class="kpi"><div class="kpi-icon">👨‍⚕️</div><div class="kpi-value">${stf.people.filter(p=>p.role==='醫師'||p.role==='物理治療師'||p.role==='護理師').length}</div><div class="kpi-unit">人</div><div class="kpi-label">醫護治療</div></div>
+          <div class="kpi warning"><div class="kpi-icon">☕</div><div class="kpi-value">${stf.people.filter(p=>p.status==='break').length}</div><div class="kpi-unit">人</div><div class="kpi-label">休息中</div></div>
+          <div class="kpi danger"><div class="kpi-icon">⚠️</div><div class="kpi-value">${stf.people.filter(p=>p.status==='overtime').length}</div><div class="kpi-unit">人</div><div class="kpi-label">工時異常</div></div>
+        </div>
+        <div class="card mb-4"><div class="card-header"><div style="display:flex;gap:8px;border-bottom:2px solid #f5f5f5;flex-wrap:wrap;">
+          <button class="tab-btn ${tab==='live'?'active':''}" onclick="sw('live')">🧑‍⚕️ 即時在線</button>
+          <button class="tab-btn ${tab==='zone'?'active':''}" onclick="sw('zone')">🗺️ 各區人力</button>
+          <button class="tab-btn ${tab==='log'?'active':''}" onclick="sw('log')">📝 簽到記錄</button>
+          <button class="tab-btn ${tab==='alerts'?'active':''}" onclick="sw('alerts')">🚨 告警 (${stf.alerts.filter(a=>!a.confirmed).length})</button>
+        </div></div><div class="card-body">${content()}</div></div>`;
+      FM.loadContent(h);
+    }
+    function content(){ if(tab==='live')return live(); if(tab==='zone')return zone(); if(tab==='log')return log(); return alerts(); }
+    function live(){
+      let h='<div class="mb-3"><h3 class="section-title">即時在線人員（依角色）</h3></div>';
+      stf.roles.forEach(role=>{
+        const ppl=onSite.filter(p=>p.role===role); if(!ppl.length) return;
+        h+=`<div style="margin-bottom:14px;"><div style="font-weight:700;color:#0054A7;margin-bottom:6px;">${role} <span class="text-muted text-sm">(${ppl.length})</span></div><div class="grid grid-cols-3 gap-2" style="--responsive-cols:auto;">`;
+        ppl.forEach(p=>{
+          const b=p.status==='on'?'<span class="badge ok">在崗</span>':p.status==='break'?'<span class="badge warn">休息</span>':'<span class="badge crit">超時</span>';
+          h+=`<div class="card"><div class="card-body" style="padding:10px;"><div style="display:flex;justify-content:space-between;align-items:center;"><strong>${p.name}</strong>${b}</div>
+            <div class="text-muted text-sm" style="margin-top:4px;">${FM.spaceTag(p.code)}</div>
+            <div class="text-muted text-sm">簽到 ${p.in} · ${p.note}</div></div></div>`;
+        });
+        h+='</div></div>';
+      });
+      return h;
+    }
+    function zone(){
+      let h='<div class="mb-3"><h3 class="section-title">各分區即時人力分布</h3></div><div class="grid grid-cols-2 gap-3" style="--responsive-cols:auto;">';
+      Object.keys(stf.zones).forEach(z=>{
+        const ppl=onSite.filter(p=>p.zone===z);
+        h+=`<div class="card"><div class="card-header"><h3>${z} 區 · ${stf.zones[z]}</h3><span class="badge ${ppl.length?'ok':'info'}">${ppl.length} 人</span></div>
+          <div class="card-body">${ppl.length?ppl.map(p=>`<span class="badge info" style="margin:2px;">${p.name}·${p.role}</span>`).join(' '):'<span class="text-muted text-sm">目前無人員</span>'}</div></div>`;
+      });
+      return h+'</div>';
+    }
+    function log(){
+      let h='<div class="mb-3"><h3 class="section-title">今日簽到/異動記錄</h3></div><table class="dtable"><thead><tr><th>人員</th><th>動作</th><th>時間</th><th>位置</th></tr></thead><tbody>';
+      stf.log.forEach(l=>{ const bad=l.act.includes('逾時');
+        h+=`<tr class="${bad?'alert-row':''}"><td><strong>${l.name}</strong></td><td>${bad?'<span class="badge crit">'+l.act+'</span>':l.act}</td><td>${l.time}</td><td>${FM.spaceTag(l.code+'-STF-01')}</td></tr>`;});
+      return h+'</tbody></table><div class="text-muted text-sm" style="margin-top:10px;">＊簽到資料與「門禁安防」刷卡記錄、「保全排班」連動，可交叉稽核到崗狀況。</div>';
+    }
+    function alerts(){
+      let h='<div class="mb-3"><h3 class="section-title">人員管理告警</h3></div>';
+      if(!stf.alerts.length) return h+'<div style="text-align:center;padding:32px;color:#999;">暫無告警</div>';
+      h+='<table class="dtable"><thead><tr><th>告警</th><th>位置</th><th>AI 建議</th><th>確認</th></tr></thead><tbody>';
+      stf.alerts.forEach(a=>{
+        h+=`<tr class="alert-row"><td><span class="badge ${a.level}">${a.level==='warn'?'注意':'緊急'}</span> <strong>${a.name}</strong><br><span class="text-muted text-sm">${a.msg} · ${FM.timeAgo(a.time)}</span></td>
+          <td>${FM.spaceTag(a.code)}</td><td><div style="background:#f9f9f9;padding:8px;border-radius:4px;" class="text-sm">${a.aiAction}</div></td>
+          <td style="text-align:center;">${a.confirmed?'<span class="badge ok">已確認</span>':`<button class="btn btn-primary btn-small" onclick="cf('${a.id}')">確認</button><br><button class="btn btn-secondary btn-small" style="margin-top:4px;" onclick="push('${a.id}')">推 LINE</button>`}</td></tr>`;});
+      return h+'</tbody></table>';
+    }
+    function sw(t){tab=t;render();}
+    function cf(id){const a=stf.alerts.find(x=>x.id===id);if(a){a.confirmed=true;render();FM.toast('已安排換班','ok');}}
+    function push(id){const a=stf.alerts.find(x=>x.id===id);if(a){FM.pushLineByAlert({level:a.level,space:a.code,msg:a.name,aiAction:a.aiAction});}}
+    render();
+  </script>
+</body>
+</html>

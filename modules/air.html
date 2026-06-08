@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>新風空品 — 德新行政管理平台</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+  <script src="../assets/app.js"></script>
+  <script>
+    /* ========================================================================
+       新風空品 AIR 模組 — CO2/PM2.5/TVOC 實時監測、全熱交換機、DCV
+       ======================================================================== */
+
+    // 頁面初始化
+    FM.renderShell('air', '新風空品 AIR');
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 1. 空品 Mock 資料（各區實時值）
+    // ─────────────────────────────────────────────────────────────────────────
+    const airQualityData = {
+      'A': {  // 接待門診
+        name: '接待門診',
+        co2: 650,
+        pm25: 28,
+        tvoc: 0.45,
+        temp: 23.2,
+        rh: 55,
+        hec: { status: 'running', speed: 75, intake: 180, exhaust: 165 },
+        dcv: { active: true, demand: 'moderate', flow: 200 }
+      },
+      'B': {  // 物理治療
+        name: '物理治療',
+        co2: 720,
+        pm25: 32,
+        tvoc: 0.52,
+        temp: 22.8,
+        rh: 52,
+        hec: { status: 'running', speed: 80, intake: 200, exhaust: 190 },
+        dcv: { active: true, demand: 'high', flow: 250 }
+      },
+      'C': {  // 運動訓練（易超標）
+        name: '運動訓練',
+        co2: 950,
+        pm25: 48,
+        tvoc: 0.78,
+        temp: 24.1,
+        rh: 58,
+        hec: { status: 'running', speed: 95, intake: 280, exhaust: 265 },
+        dcv: { active: true, demand: 'critical', flow: 350 }
+      },
+      'D': {  // 後勤行政
+        name: '後勤行政',
+        co2: 580,
+        pm25: 22,
+        tvoc: 0.38,
+        temp: 23.5,
+        rh: 50,
+        hec: { status: 'running', speed: 65, intake: 150, exhaust: 145 },
+        dcv: { active: true, demand: 'low', flow: 150 }
+      },
+      'E': {  // 輔助設施
+        name: '輔助設施',
+        co2: 610,
+        pm25: 25,
+        tvoc: 0.42,
+        temp: 23.0,
+        rh: 53,
+        hec: { status: 'running', speed: 70, intake: 160, exhaust: 155 },
+        dcv: { active: true, demand: 'moderate', flow: 180 }
+      }
+    };
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 室外環境 + 全熱交換機 Bypass（外氣冷房/節能旁通）— 搭配室外溫度與空調
+    // ─────────────────────────────────────────────────────────────────────────
+    const outdoor = { temp: 21.5, rh: 62, pm25: 24 };   // 室外即時
+    let bypassMode = 'auto';   // auto（依室外溫度自動）| recovery（全熱回收）| bypass（外氣冷房旁通）
+
+    // 是否適合外氣冷房：室外比室內低 ≥2°C、介於 16–24°C、PM2.5≤35、濕度≤70%、室內有冷房需求
+    function zoneFavorable(indoorTemp) {
+      return outdoor.temp <= indoorTemp - 2 && outdoor.temp >= 16 && outdoor.temp <= 24
+          && outdoor.pm25 <= 35 && outdoor.rh <= 70 && indoorTemp >= 23;
+    }
+    function zoneBypassOn(key) {
+      if (bypassMode === 'recovery') return false;
+      if (bypassMode === 'bypass') return true;
+      return zoneFavorable(airQualityData[key].temp);   // auto
+    }
+    // 空調聯動：旁通免費冷卻，估算空調冷負荷降幅（約 6%/°C，上限 35%）
+    function zoneSaving(key) {
+      if (!zoneBypassOn(key)) return 0;
+      const diff = airQualityData[key].temp - outdoor.temp;
+      return Math.max(0, Math.min(35, Math.round(diff * 6)));
+    }
+    function setBypassMode(m) {
+      bypassMode = m;
+      if (FM.logAction) FM.logAction('新風 Bypass 模式', m === 'auto' ? '自動' : m === 'bypass' ? '外氣冷房旁通' : '全熱回收', '室外 ' + outdoor.temp + '°C');
+      renderContent();
+    }
+
+    // 室外情境（展示外氣冷房隨室外條件的變化）
+    const scenarios = [
+      { l: '寒流 12°C', t: 12, rh: 55, p: 30 },
+      { l: '清晨涼爽 18°C', t: 18, rh: 70, p: 28 },
+      { l: '涼爽 21.5°C', t: 21.5, rh: 62, p: 24 },
+      { l: '舒適 24°C', t: 24, rh: 60, p: 30 },
+      { l: '午後悶熱 31°C', t: 31, rh: 75, p: 45 }
+    ];
+    function setOutdoorScenario(i) {
+      const s = scenarios[i]; if (!s) return;
+      outdoor.temp = s.t; outdoor.rh = s.rh; outdoor.pm25 = s.p;
+      if (FM.logAction) FM.logAction('新風 室外情境', s.l, '溫度 ' + s.t + '°C / 濕度 ' + s.rh + '% / PM2.5 ' + s.p);
+      renderContent();
+    }
+    function setOutdoorTemp(v) {
+      outdoor.temp = parseFloat(v);
+      renderContent();
+    }
+
+    function renderBypass() {
+      const keys = Object.keys(airQualityData);
+      const favorableCount = keys.filter(k => zoneFavorable(airQualityData[k].temp)).length;
+      const onCount = keys.filter(k => zoneBypassOn(k)).length;
+      const savs = keys.map(k => zoneSaving(k)).filter(v => v > 0);
+      const avgSaving = savs.length ? Math.round(savs.reduce((a, b) => a + b, 0) / savs.length) : 0;
+      const o = outdoor;
+      const seasonNote = (o.temp <= 24 && o.temp >= 16) ? '🟢 室外溫度適宜，可導入外氣冷房（free cooling）'
+        : o.temp > 24 ? '🟠 室外偏熱，建議全熱回收以隔絕熱濕' : '🔵 室外偏冷，旁通須防過度降溫';
+      const modeBtn = (k, lbl) => `<button class="btn ${bypassMode === k ? 'btn-primary' : 'btn-secondary'} btn-small" onclick="setBypassMode('${k}')">${lbl}</button>`;
+      const scenBtns = scenarios.map((s, i) => `<button class="btn ${Math.abs(o.temp - s.t) < 0.01 ? 'btn-primary' : 'btn-secondary'} btn-small" onclick="setOutdoorScenario(${i})">${s.l}</button>`).join(' ');
+
+      let h = `<div class="card" style="margin-bottom:16px;"><div class="card-header"><h3 class="text-md font-semibold">室外情境模擬</h3>
+          <div class="text-xs text-muted" style="margin-top:4px;">切換室外條件，即時觀察各區旁通與空調節能變化</div></div>
+        <div class="card-body">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">${scenBtns}</div>
+          <div style="display:flex;align-items:center;gap:14px;">
+            <span class="text-sm text-muted" style="width:72px;">室外溫度</span>
+            <input type="range" min="10" max="34" step="0.5" value="${o.temp}" onchange="setOutdoorTemp(this.value)" style="flex:1;">
+            <span style="font-size:18px;font-weight:bold;color:#0054A7;min-width:64px;text-align:right;">${o.temp}°C</span>
+          </div>
+        </div></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px;">
+        <div class="card"><div class="card-header"><h3 class="text-md font-semibold">室外即時環境</h3></div><div class="card-body">
+          <div style="display:flex;gap:24px;">
+            <div><div class="text-xs text-muted">室外溫度</div><div style="font-size:26px;font-weight:bold;color:#0054A7;">${o.temp}°C</div></div>
+            <div><div class="text-xs text-muted">室外濕度</div><div style="font-size:26px;font-weight:bold;color:#1A7A4A;">${o.rh}%</div></div>
+            <div><div class="text-xs text-muted">室外 PM2.5</div><div style="font-size:26px;font-weight:bold;color:${o.pm25 > 35 ? '#D35400' : '#1A7A4A'};">${o.pm25}</div></div>
+          </div>
+          <div style="margin-top:12px;font-size:13px;">${seasonNote}</div>
+        </div></div>
+        <div class="card"><div class="card-header"><h3 class="text-md font-semibold">全熱交換機 Bypass 模式</h3></div><div class="card-body">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+            ${modeBtn('auto', '🔄 自動')} ${modeBtn('recovery', '♨️ 全熱回收')} ${modeBtn('bypass', '❄️ 外氣冷房旁通')}
+          </div>
+          <div style="font-size:13px;line-height:2;color:#444;">
+            <div>目前模式：<b>${bypassMode === 'auto' ? '自動（依室外溫度判斷）' : bypassMode === 'bypass' ? '外氣冷房旁通' : '全熱回收'}</b></div>
+            <div>適合外氣冷房：<b>${favorableCount}</b> 區　·　目前旁通中：<b style="color:#0054A7;">${onCount}</b> 區</div>
+            <div>空調聯動節能（旁通區平均冷負荷降幅）：<b style="color:#00A94F;">${avgSaving}%</b></div>
+          </div>
+        </div></div>
+      </div>`;
+
+      h += '<table class="dtable"><thead><tr><th>區域</th><th>室內溫度</th><th>室外溫度</th><th>外氣冷房判斷</th><th>運轉模式</th><th>Bypass 風門</th><th>空調聯動節能</th></tr></thead><tbody>';
+      keys.forEach(k => {
+        const z = airQualityData[k], on = zoneBypassOn(k), fav = zoneFavorable(z.temp), sav = zoneSaving(k);
+        h += `<tr>
+          <td class="font-semibold text-sm">${z.name}</td>
+          <td class="text-sm">${z.temp}°C</td>
+          <td class="text-sm">${o.temp}°C</td>
+          <td>${fav ? '<span class="badge ok">適合</span>' : '<span class="badge info">不適合</span>'}</td>
+          <td class="text-sm">${on ? '<span style="color:#0054A7;font-weight:600;">❄️ 外氣冷房旁通</span>' : '<span style="color:#8a5a1e;">♨️ 全熱回收</span>'}</td>
+          <td>${on ? '<span class="badge ok">開啟</span>' : '<span class="badge info">關閉</span>'}</td>
+          <td class="text-sm" style="color:${sav > 0 ? '#00A94F' : '#999'};font-weight:600;">${sav > 0 ? '−' + sav + '%' : '—'}</td>
+        </tr>`;
+      });
+      h += '</tbody></table>';
+      h += '<div style="margin-top:20px;padding:16px;background:#f9f9f9;border-radius:4px;color:#666;font-size:13px;line-height:1.8;"><strong>ℹ️ 外氣冷房 / Bypass 邏輯</strong><br>'
+        + '• 當室外溫度低於室內 ≥2°C、介於 16–24°C、PM2.5≤35、濕度≤70%、且室內有冷房需求時，全熱交換機開啟<strong>旁通風門</strong>，外氣繞過熱交換核心直接送入，免費降溫、降低空調冷負荷。<br>'
+        + '• 否則維持<strong>全熱回收</strong>，回收排氣能量、隔絕室外熱濕與污染。<br>'
+        + '• 自動模式依室外即時條件逐區判斷；亦可手動強制全熱回收或外氣冷房旁通。';
+      return h;
+    }
+
+    // 24小時空品趨勢（CO2 ppm）
+    const co2TrendData = {
+      A: [480, 520, 550, 600, 620, 650, 660, 670, 680, 675, 660, 650, 640, 620, 610, 600, 590, 580, 590, 610, 630, 645, 655, 650],
+      B: [550, 580, 610, 640, 680, 720, 730, 740, 750, 760, 770, 775, 780, 775, 770, 760, 750, 740, 750, 770, 790, 810, 815, 720],
+      C: [620, 680, 750, 820, 900, 950, 960, 970, 980, 975, 960, 950, 940, 925, 910, 900, 890, 880, 900, 920, 940, 960, 970, 950],
+      D: [420, 450, 480, 520, 540, 560, 570, 580, 590, 600, 610, 620, 630, 640, 650, 660, 670, 665, 660, 655, 650, 640, 630, 580],
+      E: [470, 500, 530, 560, 580, 600, 610, 615, 620, 625, 630, 635, 640, 645, 650, 655, 660, 665, 670, 675, 680, 685, 680, 610]
+    };
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 2. 狀態判斷與色彩對應
+    // ─────────────────────────────────────────────────────────────────────────
+    function getAirQualityLevel(co2, pm25, tvoc) {
+      // CO2 > 800ppm = crit, > 700 = warn, else ok
+      if (co2 > 800 || pm25 > 50 || tvoc > 0.7) return 'crit';
+      if (co2 > 700 || pm25 > 35 || tvoc > 0.6) return 'warn';
+      return 'ok';
+    }
+
+    function getLevelColor(level) {
+      const colors = {
+        ok: '#1A7A4A',
+        warn: '#D35400',
+        crit: '#C0392B'
+      };
+      return colors[level] || '#999';
+    }
+
+    function getDCVDemandLabel(demand) {
+      const labels = {
+        low: '低 (低人流)',
+        moderate: '中 (正常)',
+        high: '高 (活動中)',
+        critical: '極高 (運動/醫療)'
+      };
+      return labels[demand] || demand;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 3. Tab 切換邏輯
+    // ─────────────────────────────────────────────────────────────────────────
+    let activeTab = 'overview';
+
+    function switchTab(tabKey) {
+      activeTab = tabKey;
+      renderContent();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 4. 各區卡片（CO2/PM2.5/TVOC）
+    // ─────────────────────────────────────────────────────────────────────────
+    function renderAreaCards() {
+      let html = '<div class="section-title">各區空品即時值</div>';
+      html += '<div class="grid grid-cols-2">';
+
+      Object.entries(airQualityData).forEach(([areaKey, data]) => {
+        const co2Level = getAirQualityLevel(data.co2, data.pm25, data.tvoc);
+        const levelColor = getLevelColor(co2Level);
+        const spaceCode = `7-${areaKey}1-AIR-01`;
+
+        html += `
+          <div class="card">
+            <div class="card-header">
+              <h3 style="display: flex; align-items: center; gap: 8px;">
+                <span style="width: 12px; height: 12px; border-radius: 50%; background: ${levelColor}; display: inline-block;"></span>
+                ${data.name}
+              </h3>
+              <small class="text-muted">${FM.spaceTag(spaceCode)}</small>
+            </div>
+            <div class="card-body">
+              <div class="grid grid-cols-3 gap-2">
+                <div class="text-center">
+                  <div style="font-size: 24px; font-weight: bold; color: ${levelColor};">${data.co2}</div>
+                  <div class="text-sm text-muted">CO₂ ppm</div>
+                  ${data.co2 > 800 ? '<div style="color: #C0392B; font-size: 12px; margin-top: 4px;">⚠️ 超標</div>' : ''}
+                </div>
+                <div class="text-center">
+                  <div style="font-size: 24px; font-weight: bold; color: #FF9500;">${data.pm25}</div>
+                  <div class="text-sm text-muted">PM2.5 μg/m³</div>
+                </div>
+                <div class="text-center">
+                  <div style="font-size: 24px; font-weight: bold; color: #A366FF;">${data.tvoc.toFixed(2)}</div>
+                  <div class="text-sm text-muted">TVOC mg/m³</div>
+                </div>
+              </div>
+              <div style="margin-top: 12px; padding-top: 8px; border-top: 1px solid #eee; font-size: 12px; color: #666;">
+                溫度: ${data.temp}°C | 濕度: ${data.rh}%
+              </div>
+            </div>
+          </div>
+        `;
+      });
+
+      html += '</div>';
+      return html;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 5. 全熱交換機 (HEC) 狀態表（含周均值）
+    // ─────────────────────────────────────────────────────────────────────────
+    function renderHECStatus() {
+      let html = '<div class="section-title">全熱交換機狀態</div>';
+
+      const rows = [];
+      // 模擬周均值（實際應由後端提供）
+      const weeklyAvg = { A: 72, B: 78, C: 92, D: 64, E: 70 };
+
+      Object.entries(airQualityData).forEach(([areaKey, data]) => {
+        const status = data.hec.status === 'running' ? '▶️ 運行' : '⏸️ 停止';
+        const spaceCode = `7-${areaKey}1-AIR-02`;
+        const speedTrend = data.hec.speed >= weeklyAvg[areaKey] ? '↗️' : '↘️';
+        rows.push([
+          data.name,
+          FM.spaceTag(spaceCode),
+          status,
+          `${data.hec.speed}%`,
+          `${weeklyAvg[areaKey]}%`,
+          `${speedTrend}`,
+          `進: ${data.hec.intake} m³/h`,
+          `排: ${data.hec.exhaust} m³/h`,
+          `效率: ${Math.round((data.hec.exhaust / data.hec.intake) * 100)}%`
+        ]);
+      });
+
+      html += FM.createTable(
+        ['區域', '空間碼', '狀態', '當前%', '周均%', '趨勢', '進氣', '排氣', '交換效率'],
+        rows
+      );
+
+      return html;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 6. DCV 需求控制換氣
+    // ─────────────────────────────────────────────────────────────────────────
+    function renderDCV() {
+      let html = '<div class="section-title">DCV 需求控制換氣</div>';
+      html += '<div class="grid grid-cols-2 gap-3">';
+
+      Object.entries(airQualityData).forEach(([areaKey, data]) => {
+        const demandColors = {
+          low: '#1A7A4A',
+          moderate: '#008CD6',
+          high: '#D35400',
+          critical: '#C0392B'
+        };
+        const demandColor = demandColors[data.dcv.demand] || '#999';
+
+        html += `
+          <div class="card">
+            <div class="card-header">
+              <h3>${data.name}</h3>
+            </div>
+            <div class="card-body">
+              <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+                <div style="width: 48px; height: 48px; border-radius: 50%; background: ${demandColor}; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 20px;">
+                  ${Math.round((data.dcv.flow / 350) * 100)}%
+                </div>
+                <div>
+                  <div style="font-weight: bold; color: ${demandColor};">${getDCVDemandLabel(data.dcv.demand)}</div>
+                  <div class="text-sm text-muted">目標流量: ${data.dcv.flow} m³/h</div>
+                </div>
+              </div>
+              <div class="progress">
+                <div class="progress-bar" style="width: ${Math.round((data.dcv.flow / 350) * 100)}%; background: ${demandColor};"></div>
+              </div>
+              <div style="margin-top: 8px; font-size: 12px; color: #666; text-align: center;">
+                ${data.dcv.active ? '✓ DCV 啟動中' : '✗ DCV 關閉'}
+              </div>
+            </div>
+          </div>
+        `;
+      });
+
+      html += '</div>';
+      return html;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 7. CO2 24h 趨勢圖（含資料點標籤：最高、最低、當前）
+    // ─────────────────────────────────────────────────────────────────────────
+    function renderTrendCharts() {
+      let html = '<div class="section-title">CO₂ 24 小時趨勢</div>';
+      html += '<div style="margin-bottom: 20px;">';
+      html += '<p class="text-sm text-muted" style="margin-bottom: 12px;">虛線表示建議上限 800ppm，單位: ppm | 圖中標記：最高值(▲)、最低值(▼)、當前值(●)</p>';
+
+      Object.entries(co2TrendData).forEach(([areaKey, trendValues]) => {
+        const areaName = airQualityData[areaKey].name;
+
+        // 統計資料
+        const minVal = Math.min(...trendValues);
+        const maxVal = Math.max(...trendValues);
+        const currentVal = trendValues[trendValues.length - 1];
+        const minIdx = trendValues.indexOf(minVal);
+        const maxIdx = trendValues.indexOf(maxVal);
+
+        // 生成 SVG 折線圖（含 800ppm 警告線）
+        const width = 600;
+        const height = 160;
+        const padding = 35;
+        const chartWidth = width - 2 * padding;
+        const chartHeight = height - 2 * padding;
+        const maxCO2 = 1000;
+        const points = trendValues.length;
+        const xStep = chartWidth / (points - 1);
+
+        let svg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg" style="border: 1px solid #eee; margin: 12px 0; border-radius: 4px;">`;
+        svg += `<rect width="${width}" height="${height}" fill="white"/>`;
+
+        // 坐標軸
+        svg += `<line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" stroke="#ddd" stroke-width="1"/>`;
+        svg += `<line x1="${padding}" y1="${padding}" x2="${padding}" y2="${height - padding}" stroke="#ddd" stroke-width="1"/>`;
+
+        // 800ppm 警告線（紅色虛線）
+        const warningY = height - padding - (800 / maxCO2) * chartHeight;
+        svg += `<line x1="${padding}" y1="${warningY}" x2="${width - padding}" y2="${warningY}" stroke="#C0392B" stroke-width="1" stroke-dasharray="5,5" opacity="0.6"/>`;
+        svg += `<text x="${padding - 20}" y="${warningY - 5}" font-size="10" fill="#C0392B">800</text>`;
+
+        // 數據線
+        let pathD = '';
+        trendValues.forEach((val, i) => {
+          const x = padding + i * xStep;
+          const y = height - padding - (val / maxCO2) * chartHeight;
+          pathD += (i === 0 ? 'M' : 'L') + ` ${x} ${y}`;
+        });
+
+        const areaColor = airQualityData[areaKey].co2 > 800 ? '#C0392B' : '#008CD6';
+        svg += `<path d="${pathD}" stroke="${areaColor}" stroke-width="2" fill="none" stroke-linecap="round"/>`;
+
+        // X 軸刻度（每 4 小時一個）
+        for (let i = 0; i < points; i += 4) {
+          const x = padding + i * xStep;
+          const hour = i;
+          svg += `<text x="${x}" y="${height - padding + 15}" font-size="10" text-anchor="middle" fill="#999">${hour}h</text>`;
+        }
+
+        // 資料點標籤：最低值
+        const minX = padding + minIdx * xStep;
+        const minY = height - padding - (minVal / maxCO2) * chartHeight;
+        svg += `<circle cx="${minX}" cy="${minY}" r="4" fill="#1A7A4A"/>`;
+        svg += `<text x="${minX}" y="${minY - 12}" font-size="10" fill="#1A7A4A" text-anchor="middle" font-weight="bold">▼ ${minVal}</text>`;
+
+        // 資料點標籤：最高值
+        const maxX = padding + maxIdx * xStep;
+        const maxY = height - padding - (maxVal / maxCO2) * chartHeight;
+        svg += `<circle cx="${maxX}" cy="${maxY}" r="4" fill="#C0392B"/>`;
+        svg += `<text x="${maxX}" y="${maxY - 12}" font-size="10" fill="#C0392B" text-anchor="middle" font-weight="bold">▲ ${maxVal}</text>`;
+
+        // 資料點標籤：當前值（右側末端）
+        const currentX = padding + (points - 1) * xStep;
+        const currentY = height - padding - (currentVal / maxCO2) * chartHeight;
+        svg += `<circle cx="${currentX}" cy="${currentY}" r="4" fill="#008CD6"/>`;
+        svg += `<text x="${currentX}" y="${currentY + 14}" font-size="10" fill="#008CD6" text-anchor="middle" font-weight="bold">● ${currentVal}</text>`;
+
+        // 區域名稱
+        svg += `<text x="${padding}" y="${padding - 10}" font-size="12" font-weight="bold" fill="#333">${areaName}</text>`;
+
+        svg += '</svg>';
+
+        html += svg;
+      });
+
+      html += '</div>';
+      return html;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 8. 告警摘要 & 確認機制（CO2/PM2.5/TVOC）
+    // ─────────────────────────────────────────────────────────────────────────
+    function renderAlertSummary() {
+      let html = '<div class="section-title">空品超標告警</div>';
+
+      const alerts = [];
+      Object.entries(airQualityData).forEach(([areaKey, data]) => {
+        const spaceCode = `7-${areaKey}1-AIR-01`;
+        let alertType = null;
+        let recommendation = '';
+
+        // CO2 超標（>800 ppm）
+        if (data.co2 > 800) {
+          alertType = 'CO2';
+          recommendation = data.co2 > 950 ? '立即提升 HEC 至 100% & DCV 切換極高模式' : '提升 HEC 至 85% & DCV 切換高流量';
+          alerts.push({
+            id: `AIR-CO2-${areaKey}-${Date.now()}`,
+            area: data.name,
+            type: 'CO2',
+            value: `${data.co2} ppm`,
+            space: spaceCode,
+            recommendation: recommendation,
+            level: 'danger'
+          });
+        }
+
+        // PM2.5 超標（>35 μg/m³ 為警示，>50 為危急）
+        if (data.pm25 > 35) {
+          const pm25Level = data.pm25 > 50 ? 'danger' : 'warn';
+          const pm25Rec = data.pm25 > 50
+            ? '立即開啟高效率 HEPA 濾網、加強進氣淨化至 100%'
+            : '檢查濾網狀態、提升 HEC 淨化等級';
+          alerts.push({
+            id: `AIR-PM25-${areaKey}-${Date.now()}`,
+            area: data.name,
+            type: 'PM2.5',
+            value: `${data.pm25} μg/m³`,
+            space: spaceCode,
+            recommendation: pm25Rec,
+            level: pm25Level
+          });
+        }
+
+        // TVOC 超標（>0.6 mg/m³ 為警示，>0.7 為危急）
+        if (data.tvoc > 0.6) {
+          const tvocLevel = data.tvoc > 0.7 ? 'danger' : 'warn';
+          const tvocRec = data.tvoc > 0.7
+            ? '立即停止污染源、強制排風、檢查設備異常'
+            : '增加新風進氣、檢查室內污染源';
+          alerts.push({
+            id: `AIR-TVOC-${areaKey}-${Date.now()}`,
+            area: data.name,
+            type: 'TVOC',
+            value: `${data.tvoc.toFixed(2)} mg/m³`,
+            space: spaceCode,
+            recommendation: tvocRec,
+            level: tvocLevel
+          });
+        }
+      });
+
+      if (alerts.length === 0) {
+        html += '<div class="card"><div class="card-body text-center" style="color: #1A7A4A;">✓ 全區空品正常（CO₂<800ppm、PM2.5<35、TVOC<0.6）</div></div>';
+      } else {
+        // 按優先級排序：danger > warn
+        alerts.sort((a, b) => (b.level === 'danger' ? 1 : -1) - (a.level === 'danger' ? 1 : -1));
+
+        alerts.forEach(alert => {
+          const borderColor = alert.level === 'danger' ? '#C0392B' : '#D35400';
+          html += `
+            <div class="card" style="border-left: 4px solid ${borderColor};">
+              <div class="card-body">
+                <div style="display: flex; justify-content: space-between; align-items: start; gap: 12px;">
+                  <div>
+                    <div style="font-weight: bold; color: ${borderColor}; font-size: 16px;">⚠️ ${alert.area} ${alert.type} 超標</div>
+                    <div style="margin-top: 8px; font-size: 14px; color: #333;">
+                      <strong>讀值:</strong> ${alert.value}<br>
+                      <strong>空間碼:</strong> ${FM.spaceTag(alert.space)}<br>
+                      <strong>建議行動:</strong> <span style="color: ${borderColor};">${alert.recommendation}</span>
+                    </div>
+                  </div>
+                  <button class="btn btn-danger btn-small" onclick="confirmAirAlert('${alert.id}')">已確認</button>
+                </div>
+              </div>
+            </div>
+          `;
+        });
+      }
+
+      return html;
+    }
+
+    // 確認告警函式（CO2/PM2.5/TVOC）
+    window.confirmAirAlert = function(alertId) {
+      FM.showModal(
+        '確認告警',
+        `<p>確認已採取行動調整通風與淨化設定？</p>
+         <p style="color: #666; font-size: 14px; margin-top: 12px;">此操作將記錄維運日誌與告警時間戳。</p>`,
+        [
+          { label: '取消', type: 'secondary', onclick: 'FM.closeModal()' },
+          { label: '確認', type: 'danger', onclick: 'window.confirmAirAlertHandler()' }
+        ]
+      );
+    };
+
+    window.confirmAirAlertHandler = function() {
+      FM.closeModal();
+      alert('告警已確認，記錄到案');
+    };
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 9. 主渲染函式
+    // ─────────────────────────────────────────────────────────────────────────
+    function renderContent() {
+      let html = '';
+
+      // Tab 導覽
+      html += `
+        <div style="display: flex; gap: 12px; margin-bottom: 20px; border-bottom: 1px solid #ddd; padding-bottom: 0;">
+          <button class="btn ${activeTab === 'overview' ? 'btn-primary' : 'btn-secondary'} btn-small"
+                  onclick="switchTab('overview')" style="border-bottom: ${activeTab === 'overview' ? '3px solid #008CD6' : 'none'};">
+            📊 概覽
+          </button>
+          <button class="btn ${activeTab === 'hec' ? 'btn-primary' : 'btn-secondary'} btn-small"
+                  onclick="switchTab('hec')" style="border-bottom: ${activeTab === 'hec' ? '3px solid #008CD6' : 'none'};">
+            🌬️ HEC 機組
+          </button>
+          <button class="btn ${activeTab === 'dcv' ? 'btn-primary' : 'btn-secondary'} btn-small"
+                  onclick="switchTab('dcv')" style="border-bottom: ${activeTab === 'dcv' ? '3px solid #008CD6' : 'none'};">
+            💨 DCV 控制
+          </button>
+          <button class="btn ${activeTab === 'trend' ? 'btn-primary' : 'btn-secondary'} btn-small"
+                  onclick="switchTab('trend')" style="border-bottom: ${activeTab === 'trend' ? '3px solid #008CD6' : 'none'};">
+            📈 趨勢分析
+          </button>
+          <button class="btn ${activeTab === 'bypass' ? 'btn-primary' : 'btn-secondary'} btn-small"
+                  onclick="switchTab('bypass')" style="border-bottom: ${activeTab === 'bypass' ? '3px solid #008CD6' : 'none'};">
+            ♻️ Bypass 節能
+          </button>
+        </div>
+      `;
+
+      // 根據 Tab 載入對應內容
+      switch (activeTab) {
+        case 'overview':
+          html += renderAreaCards();
+          html += '<div style="margin-top: 24px;"></div>';
+          html += renderAlertSummary();
+          break;
+        case 'hec':
+          html += renderHECStatus();
+          html += '<div style="margin-top: 24px; padding: 16px; background: #f9f9f9; border-radius: 4px; color: #666; font-size: 14px;">';
+          html += '<strong>ℹ️ 說明:</strong><br>';
+          html += '• 進/排氣流量單位: m³/h (立方米/小時)<br>';
+          html += '• 交換效率 = 排氣流量 ÷ 進氣流量，>85% 表示熱回收性能優良<br>';
+          html += '• 所有機組均正常運行，全天 24h 無間斷淨化';
+          html += '</div>';
+          break;
+        case 'dcv':
+          html += renderDCV();
+          // 動態計算流量範圍
+          const dcvFlows = Object.values(airQualityData).map(d => d.dcv.flow);
+          const minFlow = Math.min(...dcvFlows);
+          const maxFlow = Math.max(...dcvFlows);
+          html += '<div style="margin-top: 24px; padding: 16px; background: #f9f9f9; border-radius: 4px; color: #666; font-size: 14px;">';
+          html += '<strong>ℹ️ DCV 需求控制:</strong><br>';
+          html += '• 依 CO₂ 濃度實時調整換氣量，最大化省能與舒適度<br>';
+          html += `• 低流量 (${minFlow}m³/h): 無人或低人流區域<br>`;
+          html += `• 高流量 (${maxFlow}m³/h): 運動訓練區、高密度活動區需強化淨化`;
+          html += '</div>';
+          break;
+        case 'trend':
+          html += renderTrendCharts();
+          html += '<div style="margin-top: 24px; padding: 16px; background: #f9f9f9; border-radius: 4px; color: #666; font-size: 14px;">';
+          html += '<strong>ℹ️ 趨勢分析:</strong><br>';
+          html += '• 紅色虛線: WHO 建議上限 (800 ppm，中等人流密度場景)<br>';
+          html += '• 藍線: 正常 | 紅線: 超標<br>';
+          html += '• 運動訓練區早晚浮動較大，午間尖峰可達 950+ ppm';
+          html += '</div>';
+          break;
+        case 'bypass':
+          html += renderBypass();
+          break;
+      }
+
+      FM.loadContent(html);
+    }
+
+    // 初始渲染
+    renderContent();
+  </script>
+</body>
+</html>

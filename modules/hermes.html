@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hermes AI 主管台 — 德新行政管理平台</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <style>
+    #hc-msgs { height:380px; overflow-y:auto; background:#f6f8fb; border-radius:8px; padding:16px; }
+    .hc-u { text-align:right; margin-bottom:12px; }
+    .hc-u span { display:inline-block; background:#0054A7; color:#fff; padding:9px 14px; border-radius:14px 14px 2px 14px; font-size:14px; max-width:78%; text-align:left; white-space:pre-line; }
+    .hc-a span { display:inline-block; background:#fff; border:1px solid #e3e8ef; padding:9px 14px; border-radius:14px 14px 14px 2px; font-size:14px; max-width:82%; white-space:pre-line; }
+    .hc-a { margin-bottom:12px; }
+    .chip { display:inline-block; background:#D3EDFB; color:#0054A7; padding:5px 12px; border-radius:16px; font-size:12px; cursor:pointer; margin:3px; }
+    .chip:hover { background:#008CD6; color:#fff; }
+  </style>
+</head>
+<body>
+  <div id="fm-shell"></div>
+  <div id="fm-content"></div>
+  <script src="../assets/app.js"></script>
+  <script>
+    FM.renderShell('hermes', 'Hermes AI 主管台');
+
+    const hermesCfg = {
+      knowledge: [
+        { cat:'告警處置 SOP', items:['緊急(crit)：30 秒內通報主管群+工務群，高風險動作需人工確認','一般(warn)：自動開工單派工務群，2 小時內回報','資訊(info)：彙整日報，不即時打擾'] },
+        { cat:'人工確認關卡', items:['電力關斷、製冰機停水、空調關機等高風險動作一律需主管/值班確認','採購、議價、跨單位調度需人工核可'] },
+        { cat:'場域知識', items:['7F 整層 542 坪，分區 A 接待門診/B 物理治療/C 運動訓練/D 後勤/E 輔助','B3 為震波區（220V 專迴、隔音 Rw≥45）','消防甲類每半年定檢（6/30、12/31）'] },
+        { cat:'推播對象規則', items:['緊急→主管群+工務群+使用單位群','一般→工務群+使用單位群','資訊→使用單位群'] },
+      ],
+      settings: [
+        { k:'自動推播門檻', v:'緊急即時 / 一般彙整 5 分鐘', on:true },
+        { k:'高風險動作人工確認', v:'關斷/停水/停機/採購', on:true },
+        { k:'回覆語氣', v:'專業簡潔（主管視角）', on:true },
+        { k:'對話訓練（線上學習）', v:'記錄修正樣本供微調', on:true },
+        { k:'去識別化資料政策', v:'影像/個資僅統計，不外流', on:true },
+      ],
+    };
+
+    let tab='queue';
+    function render(){
+      const autoN = FM.reportAutoProcess();
+      const pend = FM.loadReports().filter(r=>r.status==='new'||r.status==='returned').length;
+      let h=`
+        <div class="grid grid-cols-4 gap-3 mb-4">
+          <div class="kpi ${pend?'warning':'success'}"><div class="kpi-icon">📥</div><div class="kpi-value">${pend}</div><div class="kpi-unit">件</div><div class="kpi-label">待研判</div></div>
+          <div class="kpi success"><div class="kpi-icon">🤖</div><div class="kpi-value">${FM.autoMode?'開':'關'}</div><div class="kpi-label">自動分流</div></div>
+          <div class="kpi"><div class="kpi-icon">🎓</div><div class="kpi-value">${FM.hermesTraining.length}</div><div class="kpi-unit">筆</div><div class="kpi-label">訓練樣本</div></div>
+          <div class="kpi"><div class="kpi-icon">📚</div><div class="kpi-value">${hermesCfg.knowledge.reduce((s,k)=>s+k.items.length,0)}</div><div class="kpi-unit">條</div><div class="kpi-label">知識/SOP</div></div>
+        </div>
+        <div class="card mb-4"><div class="card-header"><div style="display:flex;gap:8px;border-bottom:2px solid #f5f5f5;flex-wrap:wrap;">
+          <button class="tab-btn ${tab==='brief'?'active':''}" onclick="sw('brief')">🟢 看診前簡報</button>
+          <button class="tab-btn ${tab==='queue'?'active':''}" onclick="sw('queue')">📥 待研判佇列 (${pend})</button>
+          <button class="tab-btn ${tab==='chat'?'active':''}" onclick="sw('chat')">💬 對話台</button>
+          <button class="tab-btn ${tab==='train'?'active':''}" onclick="sw('train')">🎓 訓練紀錄</button>
+          <button class="tab-btn ${tab==='kb'?'active':''}" onclick="sw('kb')">📚 知識庫/SOP</button>
+          <button class="tab-btn ${tab==='set'?'active':''}" onclick="sw('set')">⚙️ 模型設定</button>
+        </div></div><div class="card-body">${content()}</div></div>`;
+      FM.loadContent(h);
+      if(tab==='chat') drawMsgs();
+    }
+    function content(){ if(tab==='brief')return brief(); if(tab==='queue')return queueView(); if(tab==='chat')return chat(); if(tab==='train')return train(); if(tab==='kb')return kb(); return settings(); }
+
+    const catNm={clean:'清潔',fix:'維修',sec:'保全',hvac:'空調',power:'電力照明',water:'給排水',it:'資訊網路',med:'醫療儀器',supply:'耗材備品',env:'環境/感染',safe:'安全設施',fire:'消防',other:'其他'};
+    function queueView(){
+      const pend=FM.loadReports().filter(r=>r.status==='new'||r.status==='returned');
+      let h='<div class="mb-3"><h3 class="section-title">待研判佇列 · 主管直接裁決</h3></div>';
+      h+=`<div style="margin-bottom:12px;"><button class="btn btn-secondary btn-small" onclick="render()">🔄 重新整理</button>
+        <span class="text-muted text-sm" style="margin-left:10px;">🤖 自動分流低風險例行案（${FM.autoMode?'開啟':'關閉'}）<span style="cursor:pointer;color:#0054A7;margin-left:6px;" onclick="FM.autoMode=!FM.autoMode;render();FM.toast('自動分流：'+(FM.autoMode?'開':'關'),FM.autoMode?'ok':'warn');">切換</span></span></div>`;
+      if(!pend.length) return h+'<div style="text-align:center;padding:36px;color:#999;">佇列已清空 🎉<br>低風險案件由 Hermes 自動派工，緊急/需確認案件已裁決完畢。</div>';
+      pend.forEach(r=>{
+        const t=FM.hermesTriage(r);
+        const sev=t.severity==='緊急'?'<span class="badge crit">緊急</span>':'<span class="badge info">一般</span>';
+        h+=`<div class="card mb-3"><div class="card-body">
+          <div><strong>${r.id}</strong> ${sev} ${r.status==='returned'?'<span class="badge crit">退回再送</span>':''} <span class="text-muted text-sm">[${catNm[r.cat]||r.cat}] ${r.loc} · ${r.by} · ${FM.timeAgo(r.time)}</span></div>
+          <div style="margin-top:5px;">${r.desc}</div>
+          <div style="margin-top:8px;background:#f3f8ff;border:1px solid #d3e3f5;border-radius:8px;padding:10px;font-size:13px;line-height:1.8;">
+            <div>🤖 <strong>研判嚴重度：</strong><span class="badge ${t.severity==='緊急'?'crit':'info'}">${t.severity}</span></div>
+            ${t.reclass?'<div style="margin-top:6px;"><strong>建議改類：</strong>'+(catNm[t.finalCat]||t.finalCat)+'</div>':''}
+            <div style="margin-top:6px;"><strong>建議權責：</strong><strong>${t.team}</strong>${t.contact?'（工務機 '+t.contact.ext+'）':''}</div>
+            <div style="margin-top:6px;"><strong>時限：</strong>${t.sla}</div>
+            <div style="margin-top:6px;color:#1A7A4A;"><strong>處置步驟：</strong><ol style="margin:4px 0 0 20px;padding:0;">${t.sop.map((s,i)=>'<li>'+s+'</li>').join('')}</ol></div>
+            ${t.risk?'<div style="margin-top:6px;"><strong>風險提示：</strong>'+t.risk+'</div>':''}
+          </div>
+          <div style="margin-top:8px;">
+            <button class="btn btn-primary btn-small" onclick="qTake('${r.id}')">✅ 採納並派工</button>
+            <button class="btn btn-secondary btn-small" onclick="qAdjust('${r.id}')">✏️ 調整</button>
+            <button class="btn btn-danger btn-small" onclick="qReject('${r.id}')">↩️ 退回</button>
+          </div>
+        </div></div>`;
+      });
+      return h;
+    }
+    function qTake(id){ const t=FM.reportTake(id); render(); FM.toast('已採納並派 '+(t?t.team:''),'ok'); }
+    function qAdjust(id){ const r=FM.loadReports().find(x=>x.id===id); if(!r)return; const t=FM.hermesTriage(r); const team=window.prompt('調整權責組別（建議 '+t.team+'）：',t.team); if(team===null)return; FM.reportAdjust(id,team.trim()||t.team); render(); FM.toast('已調整派工','info'); }
+    function qReject(id){ const reason=window.prompt('退回原因：','資訊不足，請補充發生位置與時間'); if(reason===null)return; FM.reportReject(id,reason.trim()); render(); FM.toast('已退回','warn'); }
+    function chat(){
+      return `<div class="mb-3"><h3 class="section-title">與 Hermes 對話 · 管理 · 訓練</h3></div>
+        <div id="hc-msgs"></div>
+        <div style="margin:10px 0;">
+          <span class="chip" onclick="quick('目前狀況如何？')">目前狀況如何？</span>
+          <span class="chip" onclick="quick('把緊急告警推播到 LINE')">推播緊急告警</span>
+          <span class="chip" onclick="quick('有沒有人員工時異常？')">人員工時</span>
+          <span class="chip" onclick="quick('給我本週節能建議')">節能建議</span>
+          <span class="chip" onclick="quick('我要訓練你')">訓練模式</span>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <input id="hc-input" placeholder="輸入給 Hermes 的指示…" style="flex:1;border:1px solid #ddd;border-radius:20px;padding:10px 16px;font-size:14px;outline:none;" onkeydown="if(event.key==='Enter')send()">
+          <button class="btn btn-primary" onclick="send()">送出</button>
+        </div>`;
+    }
+    function drawMsgs(){
+      const box=document.getElementById('hc-msgs'); if(!box) return;
+      box.innerHTML=FM.hermesHistory.map(m=>{
+        if(m.role==='user') return `<div class="hc-u"><span>${m.text}</span></div>`;
+        return `<div class="hc-a"><span>${m.text}</span><div style="font-size:11px;color:#aaa;margin-top:3px;">
+          <span style="cursor:pointer;" onclick="FM.hermesFeedback('${m.id}',1);FM.toast('已記錄正向回饋','ok')">👍</span>
+          <span style="cursor:pointer;margin-left:6px;" onclick="FM.hermesFeedback('${m.id}',0)">👎</span>
+          <span style="cursor:pointer;margin-left:6px;color:#0054A7;" onclick="trainOne('${m.id}')">✎ 修正訓練</span></div></div>`;
+      }).join('');
+      box.scrollTop=box.scrollHeight;
+    }
+    function send(){
+      const i=document.getElementById('hc-input'); if(!i||!i.value.trim())return;
+      const t=i.value.trim(); i.value='';
+      FM.hermesHistory.push({role:'user',id:'u'+Date.now(),text:t});
+      FM.hermesHistory.push({role:'agent',id:'a'+Date.now(),text:FM.hermesReply(t)});
+      drawMsgs();
+    }
+    function quick(t){ const i=document.getElementById('hc-input'); if(i){i.value=t; send();} }
+    function trainOne(id){ FM.hermesTrain(id); render(); }
+    function train(){
+      let h='<div class="mb-3"><h3 class="section-title">對話訓練紀錄（線上學習樣本）</h3></div>';
+      if(!FM.hermesTraining.length) return h+'<div style="text-align:center;padding:32px;color:#999;">尚無訓練樣本。可於「對話台」對 Hermes 的回覆按 👍👎 或「✎ 修正訓練」。</div>';
+      h+='<table class="dtable"><thead><tr><th>類型</th><th>內容</th><th>時間</th></tr></thead><tbody>';
+      FM.hermesTraining.slice().reverse().forEach(t=>{
+        const label=t.type==='correction'?'<span class="badge info">修正樣本</span>':t.value?'<span class="badge ok">正向</span>':'<span class="badge warn">負向</span>';
+        h+=`<tr><td>${label}</td><td>${t.type==='correction'?t.value:(t.value?'此回覆有幫助':'此回覆需修正')}</td><td class="text-muted">${FM.timeAgo(t.time)}</td></tr>`;});
+      return h+'</tbody></table>';
+    }
+    function kb(){
+      let h='<div class="mb-3"><h3 class="section-title">Hermes 知識庫 / 處置 SOP</h3></div><div class="grid grid-cols-2 gap-3" style="--responsive-cols:auto;">';
+      hermesCfg.knowledge.forEach(k=>{
+        h+=`<div class="card"><div class="card-header"><h3>${k.cat}</h3></div><div class="card-body"><ul style="margin:0;padding-left:18px;line-height:1.8;font-size:13px;">${k.items.map(i=>`<li>${i}</li>`).join('')}</ul></div></div>`;});
+      return h+'</div>';
+    }
+    function settings(){
+      let h='<div class="mb-3"><h3 class="section-title">Hermes 模型設定</h3></div><table class="dtable"><thead><tr><th>設定項</th><th>內容</th><th>狀態</th></tr></thead><tbody>';
+      hermesCfg.settings.forEach(s=>{
+        h+=`<tr><td><strong>${s.k}</strong></td><td>${s.v}</td><td>${s.on?'<span class="badge ok">啟用</span>':'<span class="badge info">停用</span>'}</td></tr>`;});
+      h+='</tbody></table><div class="text-muted text-sm" style="margin-top:10px;">＊本介面為 Demo；正式版可接入真實 Hermes Agent（LLM）並串接各子系統即時資料與 LINE 推播 API。</div>';
+      return h;
+    }
+    // ── 看診前 Status Report（給院方主管 + 德新物業副總）──
+    function brief(){
+      const r=FM.generateStatusReport();
+      const cfg={GO:{c:'#1A7A4A',bg:'#e9f7ef',ic:'🟢',t:'可正常開診'},CAUTION:{c:'#D35400',bg:'#fff3e0',ic:'🟡',t:'可開診 · 留意下列項目'},HOLD:{c:'#C0392B',bg:'#ffebee',ic:'🔴',t:'建議處置後開診'}}[r.status];
+      const dot=l=>`<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${l==='crit'?'#C0392B':l==='warn'?'#D35400':'#1A7A4A'};margin-right:7px;vertical-align:middle;"></span>`;
+      let h=`<div class="mb-3"><h3 class="section-title">看診前 Status Report</h3>
+        <div class="text-muted text-sm">致：${r.audience.join('、')}　·　${r.time.toLocaleString('zh-TW',{hour12:false})}　·　建議每日開診前 08:00 由 Hermes 自動彙整推播</div></div>`;
+
+      h+=`<div class="card mb-3"><div class="card-body" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+        <div class="text-sm">⏰ <b>每日 ${String(FM.statusSchedule.hour).padStart(2,'0')}:${String(FM.statusSchedule.minute).padStart(2,'0')}</b> 自動推播主管群
+          <span class="badge ${FM.statusSchedule.enabled?'ok':'info'}" style="margin-left:6px;">${FM.statusSchedule.enabled?'排程啟用':'已停用'}</span>
+          <span class="text-muted" style="margin-left:8px;">下次：${FM.nextStatusRun().toLocaleString('zh-TW',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false})}　今日：${FM.statusPushedToday()?'✅ 已推播':'⏳ 未推播'}</span>
+        </div>
+        <div>
+          <button class="btn btn-secondary btn-small" onclick="toggleSchedule()">${FM.statusSchedule.enabled?'停用排程':'啟用排程'}</button>
+          <button class="btn btn-primary btn-small" onclick="runScheduleNow()">⚡ 模擬立即觸發</button>
+        </div>
+      </div></div>`;
+
+      h+=`<div class="card mb-3"><div class="card-body" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;background:${cfg.bg};border-radius:8px;">
+        <div style="display:flex;align-items:center;gap:18px;">
+          <div style="font-size:42px;">${cfg.ic}</div>
+          <div>
+            <div style="font-size:13px;color:#666;">整體就緒度</div>
+            <div style="font-size:36px;font-weight:800;color:${cfg.c};line-height:1;">${r.score}<span style="font-size:16px;">％</span></div>
+            <div style="font-size:14px;font-weight:700;color:${cfg.c};margin-top:4px;">判定：${cfg.t}</div>
+          </div>
+        </div>
+        <div style="text-align:right;">
+          <div class="text-sm" style="margin-bottom:8px;">告警 🔴${r.crit.length} 🟠${r.warn.length} 🔵${r.info.length}　待確認 <b>${r.unconfirmed.length}</b>　在線 <b>${r.online}</b> 人</div>
+          <button class="btn btn-primary btn-small" onclick="pushBrief()">💬 推播主管群 LINE</button>
+          <button class="btn btn-secondary btn-small" onclick="toggleBriefText()">📋 文字版</button>
+          <button class="btn btn-secondary btn-small" onclick="render()">🔄 重新整理</button>
+        </div>
+      </div></div>`;
+
+      h+=`<div class="card mb-3"><div class="card-header"><h3>子系統就緒狀態</h3></div><div class="card-body">
+        <div class="grid grid-cols-4 gap-2">${r.systems.map(s=>`<div style="padding:10px 12px;border:1px solid #eee;border-radius:8px;">${dot(s.level)}<b>${s.name}</b>${s.count?` <span class="text-muted text-sm">(${s.count})</span>`:''}</div>`).join('')}</div>
+      </div></div>`;
+
+      h+=`<div class="grid grid-cols-2 gap-3">`;
+      h+=`<div class="card"><div class="card-header"><h3>待主管裁示（${r.unconfirmed.length}）</h3></div><div class="card-body">`;
+      if(!r.unconfirmed.length) h+='<div class="text-muted" style="padding:8px;">無需裁示事項 ✓</div>';
+      else h+=r.unconfirmed.slice(0,6).map(a=>`<div style="padding:8px 0;border-bottom:1px solid #f3f3f3;"><span class="badge ${a.level}">${a.level==='crit'?'緊急':a.level==='warn'?'注意':'資訊'}</span> ${a.msg}<div class="text-xs text-muted" style="margin-top:3px;">建議：${a.aiAction}</div></div>`).join('');
+      h+=`</div></div>`;
+      h+=`<div class="card"><div class="card-header"><h3>環境與保養</h3></div><div class="card-body" style="font-size:13px;line-height:2;">
+        <div><b>空品：</b>${r.airBad.length?r.airBad.map(z=>`${z.name} <span style="color:${z.level==='crit'?'#C0392B':'#D35400'};">CO₂ ${z.co2}ppm</span>`).join('、'):'各區正常 ✓'}</div>
+        <div><b>逾期保養：</b>${r.overdue.length?`<span style="color:#C0392B;font-weight:700;">${r.overdue.length} 項</span> — ${r.overdue.map(x=>x.item).join('、')}`:'無 ✓'}</div>
+        <div><b>即將到期：</b>${r.dueSoon.length?`${r.dueSoon.length} 項 — ${r.dueSoon.map(x=>x.item).join('、')}`:'無'}</div>
+        <div><b>全樓在線：</b>${r.online} 人</div>
+      </div></div>`;
+      h+=`</div>`;
+
+      const ns=r.nightShift, sc=r.schedule;
+      h+=`<div class="grid grid-cols-2 gap-3" style="margin-top:16px;">
+        <div class="card"><div class="card-header"><h3>昨夜值班 / 保全交接</h3></div><div class="card-body" style="font-size:13px;line-height:2;">
+          <div><b>值班：</b>${ns.guard}（${ns.shift}）</div>
+          <div><b>巡邏：</b>${ns.patrols}/${ns.patrolsPlanned} 次 ${ns.patrols>=ns.patrolsPlanned?'<span class="badge ok">完成</span>':'<span class="badge warn">未達</span>'}</div>
+          <div><b>夜間事件：</b>${ns.events.length} 件${ns.events.length?'　'+ns.events.map(e=>e.time+' '+e.msg).join('；'):''}</div>
+          <div><b>交接：</b>→ ${ns.handoverTo}（${ns.handoverTime}）<span class="badge ${ns.status==='ok'?'ok':'warn'}" style="margin-left:4px;">${ns.status==='ok'?'正常':'待確認'}</span></div>
+        </div></div>
+        <div class="card"><div class="card-header"><h3>今日門診排程稼動預估</h3></div><div class="card-body">
+          <div class="text-sm" style="margin-bottom:10px;">整體預估 <b style="color:#0054A7;font-size:18px;">${sc.util}%</b> <span class="text-muted">（預約 ${sc.booked}/${sc.capacity}）</span></div>
+          ${sc.sessions.map(s=>`<div style="margin-bottom:8px;">
+            <div style="display:flex;justify-content:space-between;font-size:13px;"><span>${s.name} <span class="text-muted">${s.time}</span></span><span><b>${s.est}%</b> <span class="text-muted">${s.booked}/${s.capacity}</span></span></div>
+            <div style="height:7px;background:#eee;border-radius:4px;overflow:hidden;margin-top:3px;"><div style="height:100%;width:${s.est}%;background:${s.est>=85?'#C0392B':s.est>=70?'#D35400':'#00A94F'};"></div></div>
+          </div>`).join('')}
+        </div></div>
+      </div>`;
+
+      h+=`<div id="brief-text-wrap" style="display:none;margin-top:16px;"><div class="card"><div class="card-header"><h3>LINE 推播文字版</h3></div><div class="card-body"><pre style="white-space:pre-wrap;font-family:inherit;font-size:13px;background:#f6f8fb;padding:14px;border-radius:8px;margin:0;">${FM.statusReportText().replace(/</g,'&lt;')}</pre></div></div></div>`;
+      return h;
+    }
+    function pushBrief(){ FM.pushStatusReport(true); FM.toast('已推播看診前簡報至主管群（含副總）','ok'); }
+    function toggleBriefText(){ const w=document.getElementById('brief-text-wrap'); if(w) w.style.display=(w.style.display==='none'?'block':'none'); }
+    function toggleSchedule(){ FM.statusSchedule.enabled=!FM.statusSchedule.enabled; render(); FM.toast('自動排程：'+(FM.statusSchedule.enabled?'啟用':'停用'), FM.statusSchedule.enabled?'ok':'warn'); }
+    function runScheduleNow(){ FM.runStatusScheduleNow(); render(); }
+
+    function sw(t){tab=t;render();}
+    render();
+
+    // 隨自動閉環即時更新（對話台打字時不刷新）
+    FM.autoLoop.onTick = function(){ if(tab==='brief'||tab==='queue') render(); };
+  </script>
+</body>
+</html>

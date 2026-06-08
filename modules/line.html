@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LINE 推播中心 — 德新行政管理平台</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <style>
+    .line-feed { background:#8cabd9; border-radius:10px; padding:14px; max-height:460px; overflow-y:auto; }
+    .line-bubble { background:#fff; border-radius:4px 14px 14px 14px; padding:10px 12px; margin-bottom:4px; font-size:13px; white-space:pre-line; box-shadow:0 1px 1px rgba(0,0,0,.1); }
+    .line-meta { font-size:11px; color:#3a5a8a; margin:8px 0 3px; font-weight:600; }
+    .line-time { font-size:10px; color:#eef; margin-left:6px; }
+    .line-grp { display:inline-block; background:#06C755; color:#fff; font-size:10px; padding:1px 7px; border-radius:8px; margin-right:4px; }
+  </style>
+</head>
+<body>
+  <div id="fm-shell"></div>
+  <div id="fm-content"></div>
+  <script src="../assets/app.js"></script>
+  <script>
+    FM.renderShell('line', 'LINE 推播中心');
+
+    let tab='feed';
+    function render(){
+      const todayPush = FM.lineLog.length;
+      let h=`
+        <div class="grid grid-cols-4 gap-3 mb-4">
+          <div class="kpi success"><div class="kpi-icon">💬</div><div class="kpi-value">已連線</div><div class="kpi-label">LINE 狀態</div></div>
+          <div class="kpi"><div class="kpi-icon">👥</div><div class="kpi-value">${FM.lineGroups.length}</div><div class="kpi-unit">群</div><div class="kpi-label">推播群組</div></div>
+          <div class="kpi"><div class="kpi-icon">📤</div><div class="kpi-value">${todayPush}</div><div class="kpi-unit">則</div><div class="kpi-label">今日推播</div></div>
+          <div class="kpi warning"><div class="kpi-icon">🔴</div><div class="kpi-value">${FM.lineLog.filter(l=>l.level==='crit').length}</div><div class="kpi-unit">則</div><div class="kpi-label">緊急推播</div></div>
+        </div>
+        <div class="card mb-4"><div class="card-header"><div style="display:flex;gap:8px;border-bottom:2px solid #f5f5f5;flex-wrap:wrap;">
+          <button class="tab-btn ${tab==='feed'?'active':''}" onclick="sw('feed')">💬 推播紀錄</button>
+          <button class="tab-btn ${tab==='groups'?'active':''}" onclick="sw('groups')">👥 群組管理</button>
+          <button class="tab-btn ${tab==='rules'?'active':''}" onclick="sw('rules')">⚙️ 推播規則</button>
+          <button class="tab-btn ${tab==='test'?'active':''}" onclick="sw('test')">🧪 測試推播</button>
+        </div></div><div class="card-body">${content()}</div></div>`;
+      FM.loadContent(h);
+    }
+    function content(){ if(tab==='feed')return feed(); if(tab==='groups')return groups(); if(tab==='rules')return rules(); return test(); }
+    function feed(){
+      let h='<div class="mb-3"><h3 class="section-title">LINE 群組推播紀錄（模擬群組訊息）</h3></div><div class="line-feed">';
+      if(!FM.lineLog.length) h+='<div style="text-align:center;color:#fff;padding:24px;">尚無推播</div>';
+      FM.lineLog.forEach(l=>{
+        h+=`<div class="line-meta">${l.groups.map(g=>`<span class="line-grp">${g}</span>`).join('')}<span class="line-time">${FM.timeAgo(l.time)}</span></div>
+            <div class="line-bubble">${l.msg}</div>`;
+      });
+      return h+'</div>';
+    }
+    function groups(){
+      let h='<div class="mb-3"><h3 class="section-title">LINE 推播群組</h3></div><div class="grid grid-cols-2 gap-3" style="--responsive-cols:auto;">';
+      FM.lineGroups.forEach(g=>{
+        h+=`<div class="card"><div class="card-header"><h3>${g.name}</h3><span class="badge ok">${g.members} 人</span></div>
+          <div class="card-body"><div class="text-muted text-sm">${g.desc}</div>
+          <div style="margin-top:8px;"><button class="btn btn-secondary btn-small" onclick="testGroup('${g.key}')">發送測試訊息</button></div></div></div>`;});
+      return h+'</div>';
+    }
+    function rules(){
+      const map={crit:'緊急',warn:'一般',info:'資訊'};
+      let h='<div class="mb-3"><h3 class="section-title">告警分級 → 推播群組規則</h3></div><table class="dtable"><thead><tr><th>告警等級</th><th>推播群組</th><th>時機</th></tr></thead><tbody>';
+      Object.keys(FM.linePushRules).forEach(lv=>{
+        const names=FM.linePushRules[lv].map(k=>(FM.lineGroups.find(g=>g.key===k)||{}).name).join('、');
+        const timing=lv==='crit'?'即時（30 秒內）':lv==='warn'?'彙整 5 分鐘批次':'日報彙整';
+        h+=`<tr><td><span class="badge ${lv}">${map[lv]}</span></td><td>${names}</td><td>${timing}</td></tr>`;});
+      h+='</tbody></table><div class="text-muted text-sm" style="margin-top:10px;">＊任一子系統告警觸發或 Hermes 判定狀況時，依此規則自動推播至對應 LINE 群組，主管與使用單位即時掌握。</div>';
+      return h;
+    }
+    function test(){
+      return `<div class="mb-3"><h3 class="section-title">測試推播</h3></div>
+        <div class="grid grid-cols-3 gap-3" style="--responsive-cols:auto;">
+          <div class="card"><div class="card-header"><h3>🔴 緊急測試</h3></div><div class="card-body"><div class="text-muted text-sm">推播至主管群+工務群+使用單位群</div><button class="btn btn-danger btn-small" style="margin-top:8px;" onclick="doTest('crit')">發送</button></div></div>
+          <div class="card"><div class="card-header"><h3>🟠 一般測試</h3></div><div class="card-body"><div class="text-muted text-sm">推播至工務群+使用單位群</div><button class="btn btn-primary btn-small" style="margin-top:8px;" onclick="doTest('warn')">發送</button></div></div>
+          <div class="card"><div class="card-header"><h3>🔵 資訊測試</h3></div><div class="card-body"><div class="text-muted text-sm">推播至使用單位群</div><button class="btn btn-secondary btn-small" style="margin-top:8px;" onclick="doTest('info')">發送</button></div></div>
+        </div>`;
+    }
+    function sw(t){tab=t;render();}
+    function doTest(lv){
+      const tag=lv==='crit'?'🔴緊急':lv==='warn'?'🟠注意':'🔵資訊';
+      FM.pushLine(FM.linePushRules[lv], `${tag} [測試推播]\n這是一則由 LINE 推播中心發送的測試訊息`, lv);
+      tab='feed'; render();
+    }
+    function testGroup(k){ FM.pushLine([k], '🔵資訊 [測試]\n單一群組測試訊息', 'info'); tab='feed'; render(); }
+    render();
+  </script>
+</body>
+</html>

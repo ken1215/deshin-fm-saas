@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>消防安全 — 德新行政管理平台</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js"></script>
+</head>
+<body>
+
+<script>
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 消防安全頁面 (fire.html)
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  // 初始化頁面
+  FM.renderShell('fire', '消防安全 FIRE');
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  // 1. 消防系統 Mock 資料
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+
+  const fireSystemData = {
+    // 受信總機狀態
+    mainPanel: {
+      status: 'ok',
+      powerVoltage: 220,
+      batteryCharge: 94,
+      systemArmed: true,
+      lastTest: new Date(Date.now() - 3 * 24 * 3600000), // 3天前
+      detectors: {
+        smoke: { total: 24, active: 24, fault: 0 },
+        sprinkler: { total: 16, active: 16, fault: 0 },
+        emergency: { total: 8, active: 8, fault: 0 },
+        exhaust: { total: 4, active: 4, fault: 0 }
+      }
+    },
+
+    // 各子系統檢驗到期倒數 (甲類每半年 6/30、12/31)
+    inspections: [
+      {
+        id: 'INSP-001',
+        subsys: '偵煙系統',
+        lastDate: new Date(2025, 11, 31), // 2025/12/31
+        nextDue: new Date(2026, 5, 30),   // 2026/6/30
+        daysLeft: Math.floor((new Date(2026, 5, 30) - new Date()) / 86400000),
+        legal: '甲類',
+        status: 'due-soon'
+      },
+      {
+        id: 'INSP-002',
+        subsys: '灑水系統',
+        lastDate: new Date(2025, 11, 31),
+        nextDue: new Date(2026, 5, 30),
+        daysLeft: Math.floor((new Date(2026, 5, 30) - new Date()) / 86400000),
+        legal: '甲類',
+        status: 'due-soon'
+      },
+      {
+        id: 'INSP-003',
+        subsys: '緊急照明',
+        lastDate: new Date(2025, 11, 31),
+        nextDue: new Date(2026, 5, 30),
+        daysLeft: Math.floor((new Date(2026, 5, 30) - new Date()) / 86400000),
+        legal: '甲類',
+        status: 'due-soon'
+      },
+      {
+        id: 'INSP-004',
+        subsys: '排煙設備',
+        lastDate: new Date(2025, 11, 31),
+        nextDue: new Date(2026, 5, 30),
+        daysLeft: Math.floor((new Date(2026, 5, 30) - new Date()) / 86400000),
+        legal: '甲類',
+        status: 'due-soon'
+      }
+    ],
+
+    // 防火管理人資訊
+    fmManager: {
+      name: '王文志',
+      cert: 'FMC-2024-001',
+      since: new Date(2024, 0, 15),
+      tel: '02-2701-0066',
+      email: 'fire-manager@deshin.com.tw',
+      trainingExpiry: new Date(2027, 5, 30)
+    },
+
+    // 自衛消防演練排程
+    drills: [
+      {
+        id: 'DRILL-001',
+        date: new Date(2026, 5, 15),  // 6/15
+        type: '小規模演練',
+        location: '全樓層',
+        participants: 40,
+        status: 'scheduled'
+      },
+      {
+        id: 'DRILL-002',
+        date: new Date(2026, 11, 15), // 12/15
+        type: '全員演練',
+        location: '全建築',
+        participants: 120,
+        status: 'scheduled'
+      },
+      {
+        id: 'DRILL-003',
+        date: new Date(2025, 11, 15),
+        type: '全員演練',
+        location: '全建築',
+        participants: 118,
+        status: 'completed'
+      }
+    ],
+
+    // 設備空間分佈告警
+    equipmentAlerts: [
+      {
+        id: 'FIRE-ALT-001',
+        code: '7-A1-FIRE-01',
+        location: '接待門診-掛號大廳',
+        device: '偵煙感測器',
+        issue: '電池電量低 (45%)',
+        level: 'warn',
+        time: new Date(Date.now() - 2 * 3600000),
+        confirmed: false
+      },
+      {
+        id: 'FIRE-ALT-002',
+        code: '7-B2-FIRE-02',
+        location: '物理治療-運動推傷室',
+        device: '灑水頭',
+        issue: '管線壓力異常低',
+        level: 'crit',
+        time: new Date(Date.now() - 15 * 60000),
+        confirmed: false
+      },
+      {
+        id: 'FIRE-ALT-003',
+        code: '7-E2-FIRE-03',
+        location: '輔助設施-女更衣室',
+        device: '緊急照明',
+        issue: '燈泡損壞',
+        level: 'warn',
+        time: new Date(Date.now() - 45 * 60000),
+        confirmed: true
+      },
+      {
+        id: 'FIRE-ALT-004',
+        code: '7-C3-FIRE-04',
+        location: '運動訓練-矯正訓練區',
+        device: '排煙風機',
+        issue: '運行噪音異常增高',
+        level: 'info',
+        time: new Date(Date.now() - 5 * 3600000),
+        confirmed: true
+      }
+    ]
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  // 2. 計算統計數據
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+
+  const fireStats = {
+    systemStatus: fireSystemData.mainPanel.status === 'ok' ? '正常' : '故障',
+    batteryHealth: fireSystemData.mainPanel.batteryCharge,
+    totalDetectors: fireSystemData.mainPanel.detectors.smoke.total +
+                    fireSystemData.mainPanel.detectors.sprinkler.total +
+                    fireSystemData.mainPanel.detectors.emergency.total +
+                    fireSystemData.mainPanel.detectors.exhaust.total,
+    activateCount: fireSystemData.mainPanel.detectors.smoke.active +
+                   fireSystemData.mainPanel.detectors.sprinkler.active +
+                   fireSystemData.mainPanel.detectors.emergency.active +
+                   fireSystemData.mainPanel.detectors.exhaust.active,
+    alertCount: {
+      crit: fireSystemData.equipmentAlerts.filter(a => a.level === 'crit').length,
+      warn: fireSystemData.equipmentAlerts.filter(a => a.level === 'warn').length,
+      info: fireSystemData.equipmentAlerts.filter(a => a.level === 'info').length
+    },
+    unconfirmedCount: fireSystemData.equipmentAlerts.filter(a => !a.confirmed).length,
+    inspecDueCount: fireSystemData.inspections.filter(i => i.daysLeft <= 30).length,
+    nextInspection: fireSystemData.inspections.reduce((min, i) =>
+      i.daysLeft < min.daysLeft ? i : min
+    )
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  // 3. 互動功能：Tab 切換
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+
+  let activeTab = 'status';
+
+  window.switchTab = function(tab) {
+    activeTab = tab;
+    renderContent();
+  };
+
+  window.confirmAlert = function(alertId) {
+    const alert = fireSystemData.equipmentAlerts.find(a => a.id === alertId);
+    if (alert) {
+      alert.confirmed = true;
+      fireStats.unconfirmedCount--;
+      renderContent();
+    }
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  // 4. 主內容渲染函式
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+
+  function renderContent() {
+    let html = '';
+
+    // ===== KPI 頂部卡片 =====
+    html += `
+      <div class="grid grid-cols-4">
+        <div class="kpi ${fireStats.systemStatus === '正常' ? 'success' : 'danger'}">
+          <div>
+            <div class="kpi-label">受信總機狀態</div>
+            <div class="kpi-value">${fireStats.systemStatus}</div>
+          </div>
+          <div class="kpi-icon">🔌</div>
+        </div>
+
+        <div class="kpi warning">
+          <div>
+            <div class="kpi-label">電池容量</div>
+            <div class="kpi-value">${fireStats.batteryHealth}</div>
+            <div class="kpi-unit">%</div>
+          </div>
+          <div class="kpi-icon">🔋</div>
+        </div>
+
+        <div class="kpi success">
+          <div>
+            <div class="kpi-label">感測器激活率</div>
+            <div class="kpi-value">${fireStats.activateCount}</div>
+            <div class="kpi-unit">/ ${fireStats.totalDetectors}</div>
+          </div>
+          <div class="kpi-icon">🚨</div>
+        </div>
+
+        <div class="kpi ${fireStats.unconfirmedCount > 0 ? 'danger' : 'success'}">
+          <div>
+            <div class="kpi-label">待確認告警</div>
+            <div class="kpi-value">${fireStats.unconfirmedCount}</div>
+          </div>
+          <div class="kpi-icon">⚠️</div>
+        </div>
+      </div>
+    `;
+
+    // ===== Tab 導覽 =====
+    html += `
+      <div class="card" style="margin-top: 20px;">
+        <div style="display: flex; gap: 12px; border-bottom: 2px solid #f5f5f5; padding-bottom: 12px;">
+          <button class="btn ${activeTab === 'status' ? 'btn-primary' : 'btn-secondary'} btn-small"
+                  onclick="switchTab('status')">
+            系統狀態
+          </button>
+          <button class="btn ${activeTab === 'alerts' ? 'btn-primary' : 'btn-secondary'} btn-small"
+                  onclick="switchTab('alerts')">
+            告警管理
+          </button>
+          <button class="btn ${activeTab === 'inspection' ? 'btn-primary' : 'btn-secondary'} btn-small"
+                  onclick="switchTab('inspection')">
+            法定檢驗
+          </button>
+          <button class="btn ${activeTab === 'management' ? 'btn-primary' : 'btn-secondary'} btn-small"
+                  onclick="switchTab('management')">
+            人員與演練
+          </button>
+        </div>
+      </div>
+    `;
+
+    // ===== 內容區塊 =====
+    if (activeTab === 'status') {
+      html += renderStatusTab();
+    } else if (activeTab === 'alerts') {
+      html += renderAlertsTab();
+    } else if (activeTab === 'inspection') {
+      html += renderInspectionTab();
+    } else if (activeTab === 'management') {
+      html += renderManagementTab();
+    }
+
+    FM.loadContent(html);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  // Tab 1: 系統狀態 (Status Tab)
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+
+  function renderStatusTab() {
+    let html = '';
+
+    html += `
+      <div class="card" style="margin-top: 20px;">
+        <div class="card-header">
+          <h3>受信總機 - 系統概況</h3>
+        </div>
+        <div class="card-body">
+          <div class="grid grid-cols-2" style="margin-bottom: 20px;">
+            <div>
+              <div style="font-size: 12px; color: #666; margin-bottom: 4px;">系統狀態</div>
+              <div style="font-size: 16px; font-weight: bold;">
+                ${FM.statusBadge(fireSystemData.mainPanel.status === 'ok' ? 'ok' : 'crit')}
+              </div>
+            </div>
+            <div>
+              <div style="font-size: 12px; color: #666; margin-bottom: 4px;">系統武裝</div>
+              <div style="font-size: 16px; font-weight: bold;">
+                ${fireSystemData.mainPanel.systemArmed ? '✓ 已啟動' : '✗ 未啟動'}
+              </div>
+            </div>
+            <div>
+              <div style="font-size: 12px; color: #666; margin-bottom: 4px;">電源電壓</div>
+              <div style="font-size: 16px; font-weight: bold; color: #0054A7;">
+                ${fireSystemData.mainPanel.powerVoltage} V
+              </div>
+            </div>
+            <div>
+              <div style="font-size: 12px; color: #666; margin-bottom: 4px;">備用電池</div>
+              <div style="font-size: 16px; font-weight: bold; color: #008CD6;">
+                ${fireSystemData.mainPanel.batteryCharge}%
+              </div>
+            </div>
+          </div>
+
+          <div style="background: #f5f5f5; padding: 12px; border-radius: 8px; margin-bottom: 20px;">
+            <div style="font-size: 12px; color: #666; margin-bottom: 8px;">最近測試</div>
+            <div style="font-size: 14px; color: #333;">
+              ${FM.timeAgo(fireSystemData.mainPanel.lastTest)}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3>感測器與執行設備分佈</h3>
+        </div>
+        <div class="card-body">
+          <div class="grid grid-cols-4" style="margin-bottom: 20px;">
+            <div style="border: 1px solid #ddd; padding: 12px; border-radius: 8px;">
+              <div style="font-size: 12px; color: #666; margin-bottom: 4px;">偵煙器</div>
+              <div style="font-size: 24px; font-weight: bold; color: #0054A7;">
+                ${fireSystemData.mainPanel.detectors.smoke.active}
+              </div>
+              <div style="font-size: 11px; color: #999; margin-top: 4px;">
+                / ${fireSystemData.mainPanel.detectors.smoke.total} 台
+              </div>
+            </div>
+
+            <div style="border: 1px solid #ddd; padding: 12px; border-radius: 8px;">
+              <div style="font-size: 12px; color: #666; margin-bottom: 4px;">灑水頭</div>
+              <div style="font-size: 24px; font-weight: bold; color: #0054A7;">
+                ${fireSystemData.mainPanel.detectors.sprinkler.active}
+              </div>
+              <div style="font-size: 11px; color: #999; margin-top: 4px;">
+                / ${fireSystemData.mainPanel.detectors.sprinkler.total} 個
+              </div>
+            </div>
+
+            <div style="border: 1px solid #ddd; padding: 12px; border-radius: 8px;">
+              <div style="font-size: 12px; color: #666; margin-bottom: 4px;">緊急照明</div>
+              <div style="font-size: 24px; font-weight: bold; color: #0054A7;">
+                ${fireSystemData.mainPanel.detectors.emergency.active}
+              </div>
+              <div style="font-size: 11px; color: #999; margin-top: 4px;">
+                / ${fireSystemData.mainPanel.detectors.emergency.total} 盞
+              </div>
+            </div>
+
+            <div style="border: 1px solid #ddd; padding: 12px; border-radius: 8px;">
+              <div style="font-size: 12px; color: #666; margin-bottom: 4px;">排煙風機</div>
+              <div style="font-size: 24px; font-weight: bold; color: #0054A7;">
+                ${fireSystemData.mainPanel.detectors.exhaust.active}
+              </div>
+              <div style="font-size: 11px; color: #999; margin-top: 4px;">
+                / ${fireSystemData.mainPanel.detectors.exhaust.total} 台
+              </div>
+            </div>
+          </div>
+
+          <div style="background: linear-gradient(90deg, #f5f5f5 0%, #fff 100%); padding: 12px; border-radius: 8px;">
+            <div style="font-size: 12px; color: #666; margin-bottom: 4px;">整體激活率</div>
+            <div class="progress">
+              <div class="progress-bar success" style="width: 100%;"></div>
+            </div>
+            <div style="font-size: 11px; color: #999; text-align: right;">
+              ${Math.round((fireStats.activateCount / fireStats.totalDetectors) * 100)}%
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    return html;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  // Tab 2: 告警管理 (Alerts Tab)
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+
+  function renderAlertsTab() {
+    let html = '';
+
+    // 告警統計概覽
+    html += `
+      <div class="grid grid-cols-3" style="margin-top: 20px;">
+        <div class="kpi danger">
+          <div>
+            <div class="kpi-label">緊急告警</div>
+            <div class="kpi-value">${fireStats.alertCount.crit}</div>
+          </div>
+          <div class="kpi-icon">🔴</div>
+        </div>
+
+        <div class="kpi warning">
+          <div>
+            <div class="kpi-label">一般告警</div>
+            <div class="kpi-value">${fireStats.alertCount.warn}</div>
+          </div>
+          <div class="kpi-icon">🟠</div>
+        </div>
+
+        <div class="kpi" style="border-left-color: #008CD6;">
+          <div>
+            <div class="kpi-label">資訊告警</div>
+            <div class="kpi-value">${fireStats.alertCount.info}</div>
+          </div>
+          <div class="kpi-icon">🔵</div>
+        </div>
+      </div>
+    `;
+
+    // 告警列表
+    html += `
+      <div class="card" style="margin-top: 20px;">
+        <div class="card-header">
+          <h3>設備告警 - 按優先級排序</h3>
+          <span style="font-size: 12px; color: #999;">共 ${fireSystemData.equipmentAlerts.length} 筆</span>
+        </div>
+        <div class="card-body">
+    `;
+
+    // 排序告警
+    const sortedAlerts = [...fireSystemData.equipmentAlerts].sort((a, b) => {
+      const levelOrder = { crit: 0, warn: 1, info: 2 };
+      return levelOrder[a.level] - levelOrder[b.level];
+    });
+
+    sortedAlerts.forEach((alert, idx) => {
+      const levelLabel = { crit: '緊急', warn: '警告', info: '資訊' }[alert.level];
+      const levelBadgeClass = { crit: 'crit', warn: 'warn', info: 'info' }[alert.level];
+      const rowClass = !alert.confirmed ? 'alert-row' : '';
+
+      html += `
+        <div style="display: flex; align-items: center; justify-content: space-between;
+                    padding: 12px; margin-bottom: 8px; background: #f9f9f9;
+                    border-radius: 6px; border-left: 4px solid ${
+                      alert.level === 'crit' ? '#C0392B' : alert.level === 'warn' ? '#D35400' : '#008CD6'
+                    };" class="${rowClass}">
+          <div style="flex: 1;">
+            <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 4px;">
+              <span class="badge ${levelBadgeClass}">${levelLabel}</span>
+              ${FM.spaceTag(alert.code)}
+            </div>
+            <div style="font-size: 14px; font-weight: 600; color: #333; margin-bottom: 4px;">
+              ${alert.device}
+            </div>
+            <div style="font-size: 12px; color: #666; margin-bottom: 4px;">
+              📍 ${alert.location}
+            </div>
+            <div style="font-size: 13px; color: #333; margin-bottom: 4px;">
+              ${alert.issue}
+            </div>
+            <div style="font-size: 11px; color: #999;">
+              報警時間：${FM.timeAgo(alert.time)}
+            </div>
+          </div>
+          <div style="text-align: right; padding-left: 12px;">
+            ${alert.confirmed ?
+              '<span style="font-size: 12px; color: #1A7A4A; font-weight: 600;">✓ 已確認</span>' :
+              `<button class="btn btn-primary btn-small" onclick="confirmAlert('${alert.id}')">確認</button>`
+            }
+          </div>
+        </div>
+      `;
+    });
+
+    html += `
+        </div>
+      </div>
+    `;
+
+    return html;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  // Tab 3: 法定檢驗 (Inspection Tab)
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+
+  function renderInspectionTab() {
+    let html = '';
+
+    // 檢驗到期倒數 KPI
+    html += `
+      <div class="card" style="margin-top: 20px;">
+        <div class="card-header">
+          <h3>定檢日程 - 甲類半年檢驗</h3>
+        </div>
+        <div class="card-body">
+          <div style="background: linear-gradient(90deg, #fff4e6 0%, #fff 100%);
+                      padding: 16px; border-radius: 8px; border-left: 4px solid #D35400; margin-bottom: 16px;">
+            <div style="font-size: 12px; color: #666; margin-bottom: 4px;">下次檢驗期限</div>
+            <div style="font-size: 20px; font-weight: bold; color: #D35400; margin-bottom: 4px;">
+              ${fireStats.nextInspection.nextDue.toLocaleDateString('zh-TW')}
+            </div>
+            <div style="font-size: 13px; color: #333;">
+              ${fireStats.nextInspection.subsys} ·
+              <span style="font-weight: 600; color: ${fireStats.nextInspection.daysLeft <= 30 ? '#D35400' : '#1A7A4A'};">
+                還有 ${fireStats.nextInspection.daysLeft} 天
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3>四大子系統檢驗排程</h3>
+        </div>
+        <div class="card-body">
+    `;
+
+    // 法定檢驗表格
+    const inspectionRows = fireSystemData.inspections.map(insp => {
+      const isUrgent = insp.daysLeft <= 30;
+      const statusIcon = isUrgent ? '⚠️' : '✓';
+      const statusColor = isUrgent ? '#D35400' : '#1A7A4A';
+
+      return [
+        insp.subsys,
+        `${insp.lastDate.toLocaleDateString('zh-TW')}`,
+        `${insp.nextDue.toLocaleDateString('zh-TW')}`,
+        `<span style="color: ${statusColor}; font-weight: 600;">${statusIcon} ${insp.daysLeft} 天</span>`,
+        insp.legal
+      ];
+    });
+
+    html += FM.createTable(
+      ['子系統', '上次檢驗', '下次檢驗', '倒數', '法定級別'],
+      inspectionRows
+    );
+
+    html += `
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3>法規要求與備忘</h3>
+        </div>
+        <div class="card-body">
+          <div style="background: #f0f7ff; padding: 12px; border-radius: 6px; margin-bottom: 12px;">
+            <div style="font-size: 12px; font-weight: 600; color: #0054A7; margin-bottom: 4px;">
+              📋 甲類檢驗規定
+            </div>
+            <div style="font-size: 13px; color: #333; line-height: 1.6;">
+              • 醫療用途建物屬甲類場所<br/>
+              • 每半年檢驗一次：6月底、12月底<br/>
+              • 逾期未檢會被罰款及停業<br/>
+              • 檢驗合格證書需貼於受信總機
+            </div>
+          </div>
+
+          <div style="background: #fff4e6; padding: 12px; border-radius: 6px;">
+            <div style="font-size: 12px; font-weight: 600; color: #D35400; margin-bottom: 4px;">
+              🚨 本期截止日期
+            </div>
+            <div style="font-size: 13px; color: #333; line-height: 1.6;">
+              2026年 6月 30日（近期倒數中）
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    return html;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  // Tab 4: 人員與演練 (Management Tab)
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+
+  function renderManagementTab() {
+    let html = '';
+
+    // 防火管理人卡片
+    html += `
+      <div class="card" style="margin-top: 20px;">
+        <div class="card-header">
+          <h3>防火管理人</h3>
+        </div>
+        <div class="card-body">
+          <div class="grid grid-cols-2" style="margin-bottom: 16px;">
+            <div>
+              <div style="font-size: 12px; color: #666; margin-bottom: 4px;">姓名</div>
+              <div style="font-size: 16px; font-weight: bold; color: #333;">
+                ${fireSystemData.fmManager.name}
+              </div>
+            </div>
+            <div>
+              <div style="font-size: 12px; color: #666; margin-bottom: 4px;">證書編號</div>
+              <div style="font-size: 14px; color: #0054A7; font-family: 'Courier New', monospace;">
+                ${fireSystemData.fmManager.cert}
+              </div>
+            </div>
+            <div>
+              <div style="font-size: 12px; color: #666; margin-bottom: 4px;">聯絡電話</div>
+              <div style="font-size: 14px; color: #333;">
+                ${fireSystemData.fmManager.tel}
+              </div>
+            </div>
+            <div>
+              <div style="font-size: 12px; color: #666; margin-bottom: 4px;">信箱</div>
+              <div style="font-size: 12px; color: #008CD6;">
+                ${fireSystemData.fmManager.email}
+              </div>
+            </div>
+          </div>
+
+          <div style="background: linear-gradient(90deg, #f5f5f5 0%, #fff 100%); padding: 12px; border-radius: 8px;">
+            <div style="font-size: 12px; color: #666; margin-bottom: 4px;">資格有效期限</div>
+            <div style="font-size: 14px; font-weight: 600; color: #1A7A4A;">
+              至 ${fireSystemData.fmManager.trainingExpiry.toLocaleDateString('zh-TW')}
+              <span style="font-size: 11px; color: #999;"> · 有效</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3>自衛消防演練排程</h3>
+        </div>
+        <div class="card-body">
+    `;
+
+    // 演練表格
+    const drillRows = fireSystemData.drills.map(drill => {
+      const statusIcon = drill.status === 'completed' ? '✓' : '📅';
+      const statusLabel = drill.status === 'completed' ? '已完成' : '排程中';
+      const statusColor = drill.status === 'completed' ? '#1A7A4A' : '#008CD6';
+
+      return [
+        `${statusIcon} ${drill.date.toLocaleDateString('zh-TW')}`,
+        drill.type,
+        drill.location,
+        `${drill.participants} 人`,
+        `<span style="color: ${statusColor}; font-weight: 600;">${statusLabel}</span>`
+      ];
+    });
+
+    html += FM.createTable(
+      ['日期', '演練類型', '範圍', '參與人數', '狀態'],
+      drillRows
+    );
+
+    html += `
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3>演練要點與注意事項</h3>
+        </div>
+        <div class="card-body">
+          <div style="background: #f0f7ff; padding: 12px; border-radius: 6px; margin-bottom: 12px;">
+            <div style="font-size: 12px; font-weight: 600; color: #0054A7; margin-bottom: 4px;">
+              📝 演練內容
+            </div>
+            <div style="font-size: 13px; color: #333; line-height: 1.6;">
+              • 火警警報系統測試與響應<br/>
+              • 疏散與避難路線確認<br/>
+              • 人員集合點清點與回報<br/>
+              • 消防器材使用與位置說明
+            </div>
+          </div>
+
+          <div style="background: #fff4e6; padding: 12px; border-radius: 6px;">
+            <div style="font-size: 12px; font-weight: 600; color: #D35400; margin-bottom: 4px;">
+              📍 集合點
+            </div>
+            <div style="font-size: 13px; color: #333; line-height: 1.6;">
+              • 主集合點：門診前大樓外空地<br/>
+              • 備用集合點：停車場東側廣場
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    return html;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  // 5. 初始化頁面
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+
+  renderContent();
+
+</script>
+
+</body>
+</html>

@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>中控戰情總覽 — 德新行政管理平台</title>
+  <link rel="stylesheet" href="assets/style.css">
+  <style>
+    /* ===== 7F 戰情主視覺（深色戰情室） ===== */
+    .war-room{
+      background:radial-gradient(120% 140% at 80% -10%, #143055 0%, #0b1c33 45%, #07111f 100%);
+      border:1px solid #1c3a5e; border-radius:14px; padding:20px 22px;
+      margin-bottom:22px; color:#E3F2FD; position:relative; overflow:hidden;
+      box-shadow:0 10px 40px rgba(0,30,70,.35), inset 0 0 60px rgba(0,120,210,.06);
+    }
+    .war-room::before{ /* 掃描線/網格底紋 */
+      content:""; position:absolute; inset:0; pointer-events:none; opacity:.5;
+      background:
+        linear-gradient(90deg, rgba(0,200,255,.05) 1px, transparent 1px) 0 0/40px 40px,
+        linear-gradient(0deg, rgba(0,200,255,.05) 1px, transparent 1px) 0 0/40px 40px;
+    }
+    .war-room > *{ position:relative; z-index:1; }
+    .war-head{ display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; }
+    .war-title{ font-size:18px; font-weight:800; letter-spacing:1px;
+      background:linear-gradient(90deg,#fff,#7fdcff); -webkit-background-clip:text; background-clip:text; color:transparent; }
+    .war-live{ display:inline-flex; align-items:center; gap:8px; font-size:12px; font-weight:700; color:#00E5FF; letter-spacing:1px; }
+    .live-dot{ width:9px; height:9px; border-radius:50%; background:#00E5FF; box-shadow:0 0 8px #00E5FF; animation:liveBlink 1.4s ease-in-out infinite; }
+    @keyframes liveBlink{ 0%,100%{opacity:1; transform:scale(1);} 50%{opacity:.35; transform:scale(.7);} }
+
+    /* KPI 戰情帶 */
+    .war-kpi-band{ display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:16px; }
+    .war-kpi{ background:rgba(8,24,44,.6); border:1px solid #1f456e; border-radius:10px; padding:12px 14px; }
+    .war-kpi-label{ font-size:11px; color:#7fa6c9; letter-spacing:1px; margin-bottom:6px; }
+    .war-kpi-val{ display:flex; align-items:baseline; gap:5px; }
+    .war-kpi-num{ font-size:26px; font-weight:800; color:#fff; font-variant-numeric:tabular-nums; }
+    .war-kpi-num.accent{ color:#00E5FF; text-shadow:0 0 14px rgba(0,229,255,.5); }
+    .war-kpi-num.warn{ color:#FFC107; text-shadow:0 0 14px rgba(255,193,7,.45); }
+    .war-kpi-unit{ font-size:12px; color:#7fa6c9; }
+
+    /* 圖層切換 */
+    .war-layers{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:14px; }
+    .war-layers-label{ font-size:12px; color:#7fa6c9; margin-right:4px; letter-spacing:1px; }
+    .war-layer-btn{ padding:6px 16px; font-size:12px; font-weight:600; cursor:pointer;
+      background:rgba(255,255,255,.04); color:#9fc0db; border:1px solid #25496f; border-radius:18px; transition:all .2s; }
+    .war-layer-btn:hover{ border-color:#00A8FF; color:#dff2ff; }
+    .war-layer-btn.active{ background:linear-gradient(90deg,#0066B3,#00A8FF); color:#fff; border-color:#00A8FF; box-shadow:0 0 14px rgba(0,168,255,.4); }
+    .war-rotate-btn{ margin-left:auto; padding:6px 14px; font-size:12px; font-weight:600; cursor:pointer; background:rgba(255,255,255,.04); color:#9fc0db; border:1px solid #25496f; border-radius:18px; transition:all .2s; }
+    .war-rotate-btn:hover{ border-color:#00E676; color:#bdf5d4; }
+    .war-rotate-btn.on{ background:linear-gradient(90deg,#008f5a,#00E676); color:#04210f; border-color:#00E676; box-shadow:0 0 14px rgba(0,230,118,.4); }
+
+    .war-svg-wrap{ background:rgba(3,12,24,.4); border:1px solid #16324f; border-radius:10px; padding:8px; }
+    .war-floor-svg{ width:100%; height:auto; display:block; }
+
+    /* 區塊脈動光暈（crit 紅） */
+    .zone-pulse{ animation:zonePulse 1.6s ease-in-out infinite; transform-box:fill-box; transform-origin:center; }
+    @keyframes zonePulse{ 0%,100%{ filter:drop-shadow(0 0 2px #FF5252); } 50%{ filter:drop-shadow(0 0 14px #FF5252); } }
+    .war-zone:hover .war-panel{ filter:brightness(1.25); }
+
+    .war-legend{ margin-top:14px; padding:10px 12px; font-size:12px; color:#cfe3f5;
+      background:rgba(8,24,44,.5); border:1px solid #1f456e; border-radius:8px;
+      display:flex; flex-wrap:wrap; gap:14px; align-items:center; }
+
+    /* 事件跑馬燈 */
+    .war-marquee{ margin-top:14px; overflow:hidden; white-space:nowrap; border-top:1px solid #1f456e; padding-top:12px; }
+    .war-mq-track{ display:inline-block; padding-left:100%; animation:mqScroll 26s linear infinite; }
+    .war-room:hover .war-mq-track{ animation-play-state:paused; }
+    .war-mq-item{ font-size:12.5px; margin-right:40px; color:#bcd6ef; }
+    .war-mq-item .dot{ display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:7px; vertical-align:middle; }
+    .war-mq-item.crit .dot{ background:#FF5252; box-shadow:0 0 7px #FF5252; }
+    .war-mq-item.warn .dot{ background:#FFC107; }
+    .war-mq-item.info .dot{ background:#00E5FF; }
+    @keyframes mqScroll{ from{transform:translateX(0);} to{transform:translateX(-100%);} }
+
+    @media (max-width:860px){ .war-kpi-band{ grid-template-columns:repeat(2,1fr); } }
+  </style>
+  <script src="assets/app.js"></script>
+</head>
+<body>
+  <script>
+    /* 初始化頁面框架 */
+    FM.renderShell('home', '中控戰情總覽');
+
+    /* ─────────────────────────────────────────────────────────────────────── */
+    /* 首頁內容：KPI戰情列 + 子系統卡片 + 即時告警流 + 樓層平面圖 + 能耗趨勢 */
+    /* ─────────────────────────────────────────────────────────────────────── */
+
+    let contentHtml = '';
+
+    /* 1. 7F 戰情主視覺（深色戰情室 Hero） */
+    contentHtml += `
+      <div class="war-room">
+        <div class="war-head">
+          <div class="war-title">⬢ 7F 戰情平面 · SITUATION FLOOR</div>
+          <div class="war-live"><span class="live-dot"></span>LIVE · 即時監控中</div>
+        </div>
+
+        <!-- KPI 戰情帶（數字跳動） -->
+        <div class="war-kpi-band">
+          <div class="war-kpi">
+            <div class="war-kpi-label">即時耗能</div>
+            <div class="war-kpi-val"><span class="war-kpi-num accent" data-target="42.5" data-dec="1">0</span><span class="war-kpi-unit">kW</span></div>
+          </div>
+          <div class="war-kpi">
+            <div class="war-kpi-label">即時告警</div>
+            <!-- 動態：未確認(待處理)告警數，由 FM.alerts 即時計算；animateKpis 僅負責 countUp 動畫 -->
+            <div class="war-kpi-val"><span class="war-kpi-num warn" data-target="${FM.alerts.filter(a => !a.confirmed).length}">0</span><span class="war-kpi-unit">件</span></div>
+          </div>
+          <div class="war-kpi">
+            <div class="war-kpi-label">空間稼動</div>
+            <div class="war-kpi-val"><span class="war-kpi-num" data-target="87">0</span><span class="war-kpi-unit">%</span></div>
+          </div>
+          <div class="war-kpi">
+            <div class="war-kpi-label">CO₂ 均值</div>
+            <div class="war-kpi-val"><span class="war-kpi-num" data-target="702">0</span><span class="war-kpi-unit">ppm</span></div>
+          </div>
+          <div class="war-kpi">
+            <div class="war-kpi-label">在線人數</div>
+            <div class="war-kpi-val"><span class="war-kpi-num accent" data-target="59">0</span><span class="war-kpi-unit">人</span></div>
+          </div>
+        </div>
+
+        <!-- 圖層切換 -->
+        <div class="war-layers">
+          <span class="war-layers-label">圖層</span>
+          <button class="war-layer-btn active" data-layer="air" onclick="pickLayer('air')">空品</button>
+          <button class="war-layer-btn" data-layer="util" onclick="pickLayer('util')">稼動率</button>
+          <button class="war-layer-btn" data-layer="temp" onclick="pickLayer('temp')">溫度</button>
+          <button class="war-layer-btn" data-layer="alert" onclick="pickLayer('alert')">告警</button>
+          <button class="war-layer-btn" data-layer="people" onclick="pickLayer('people')">人流</button>
+          <button id="layer-rotate-btn" class="war-rotate-btn" onclick="toggleRotate()">▶ 自動輪播</button>
+        </div>
+
+        <!-- 深色平面主視覺 -->
+        <div class="war-svg-wrap">
+          <svg class="war-floor-svg" viewBox="0 0 1000 460" xmlns="http://www.w3.org/2000/svg">
+
+            <!-- A 接待門診 -->
+            <g class="war-zone" onclick="FM.showZoneDetail('A')" style="cursor:pointer;">
+              <rect id="zone-A-rect" class="war-panel" x="40" y="40" width="200" height="170" rx="9" fill="#0e2138" stroke="#00E676" stroke-width="2"/>
+              <rect id="zone-A-bar" x="40" y="40" width="200" height="5" rx="2" fill="#00E676"/>
+              <g style="pointer-events:none;">
+                <text x="58" y="70" font-size="15" font-weight="bold" fill="#E3F2FD">A 接待門診</text>
+                <circle id="zone-A-dot" cx="222" cy="64" r="7" fill="#00E676"/>
+                <text x="58" y="98" font-size="12" fill="#9fc0db">CO₂ 650ppm · PM2.5 28</text>
+                <text x="58" y="122" font-size="12" fill="#9fc0db">23.2°C / 55%</text>
+                <text x="58" y="148" font-size="12" fill="#cfe3f5">稼動 92%　告警 0</text>
+                <text x="58" y="180" font-size="14" font-weight="bold" fill="#00E5FF">👤 在線 8 人</text>
+              </g>
+            </g>
+
+            <!-- B 物理治療 -->
+            <g class="war-zone" onclick="FM.showZoneDetail('B')" style="cursor:pointer;">
+              <rect id="zone-B-rect" class="war-panel" x="40" y="238" width="200" height="170" rx="9" fill="#0e2138" stroke="#FFC107" stroke-width="2"/>
+              <rect id="zone-B-bar" x="40" y="238" width="200" height="5" rx="2" fill="#FFC107"/>
+              <g style="pointer-events:none;">
+                <text x="58" y="268" font-size="15" font-weight="bold" fill="#E3F2FD">B 物理治療</text>
+                <circle id="zone-B-dot" cx="222" cy="262" r="7" fill="#FFC107"/>
+                <text x="58" y="296" font-size="12" fill="#9fc0db">CO₂ 720ppm · PM2.5 32</text>
+                <text x="58" y="320" font-size="12" fill="#9fc0db">22.8°C / 52%</text>
+                <text x="58" y="346" font-size="12" fill="#cfe3f5">稼動 87%　告警 1</text>
+                <text x="58" y="378" font-size="14" font-weight="bold" fill="#00E5FF">👤 在線 12 人</text>
+              </g>
+            </g>
+
+            <!-- C 運動訓練（中央，最高人流） -->
+            <g class="war-zone" onclick="FM.showZoneDetail('C')" style="cursor:pointer;">
+              <rect id="zone-C-rect" class="war-panel" x="262" y="40" width="196" height="368" rx="9" fill="#0e2138" stroke="#FF5252" stroke-width="2"/>
+              <rect id="zone-C-bar" x="262" y="40" width="196" height="5" rx="2" fill="#FF5252"/>
+              <g style="pointer-events:none;">
+                <text x="282" y="72" font-size="15" font-weight="bold" fill="#E3F2FD">C 運動訓練</text>
+                <circle id="zone-C-dot" cx="440" cy="66" r="7" fill="#FF5252"/>
+                <text x="282" y="112" font-size="12" fill="#9fc0db">CO₂ 950ppm　超標</text>
+                <text x="282" y="136" font-size="12" fill="#9fc0db">PM2.5 48 · TVOC 0.78</text>
+                <text x="282" y="168" font-size="12" fill="#9fc0db">24.1°C / 58%</text>
+                <text x="282" y="200" font-size="12" fill="#cfe3f5">稼動 94%　告警 1</text>
+                <text x="282" y="246" font-size="18" font-weight="bold" fill="#00E5FF">👤 在線 24 人</text>
+                <text x="282" y="272" font-size="11" fill="#7fa6c9">本層人流尖峰區</text>
+              </g>
+            </g>
+
+            <!-- D 後勤行政 -->
+            <g class="war-zone" onclick="FM.showZoneDetail('D')" style="cursor:pointer;">
+              <rect id="zone-D-rect" class="war-panel" x="480" y="40" width="226" height="170" rx="9" fill="#0e2138" stroke="#00E676" stroke-width="2"/>
+              <rect id="zone-D-bar" x="480" y="40" width="226" height="5" rx="2" fill="#00E676"/>
+              <g style="pointer-events:none;">
+                <text x="498" y="70" font-size="15" font-weight="bold" fill="#E3F2FD">D 後勤行政</text>
+                <circle id="zone-D-dot" cx="688" cy="64" r="7" fill="#00E676"/>
+                <text x="498" y="98" font-size="12" fill="#9fc0db">CO₂ 580ppm · PM2.5 22</text>
+                <text x="498" y="122" font-size="12" fill="#9fc0db">23.5°C / 50%</text>
+                <text x="498" y="148" font-size="12" fill="#cfe3f5">稼動 88%　告警 0</text>
+                <text x="498" y="180" font-size="14" font-weight="bold" fill="#00E5FF">👤 在線 6 人</text>
+              </g>
+            </g>
+
+            <!-- E 輔助設施 -->
+            <g class="war-zone" onclick="FM.showZoneDetail('E')" style="cursor:pointer;">
+              <rect id="zone-E-rect" class="war-panel" x="480" y="238" width="226" height="170" rx="9" fill="#0e2138" stroke="#00E676" stroke-width="2"/>
+              <rect id="zone-E-bar" x="480" y="238" width="226" height="5" rx="2" fill="#00E676"/>
+              <g style="pointer-events:none;">
+                <text x="498" y="268" font-size="15" font-weight="bold" fill="#E3F2FD">E 輔助(更衣淋浴)</text>
+                <circle id="zone-E-dot" cx="688" cy="262" r="7" fill="#00E676"/>
+                <text x="498" y="296" font-size="12" fill="#9fc0db">CO₂ 610ppm · PM2.5 25</text>
+                <text x="498" y="320" font-size="12" fill="#9fc0db">23.0°C / 53%　稼動 76%</text>
+                <text x="498" y="346" font-size="12" fill="#cfe3f5">告警 1</text>
+                <text x="498" y="378" font-size="14" font-weight="bold" fill="#00E5FF">👤 在線 9 人</text>
+              </g>
+            </g>
+
+            <!-- 右側中控戰情面板 -->
+            <g style="pointer-events:none;">
+              <rect x="728" y="40" width="236" height="368" rx="10" fill="rgba(6,18,36,0.85)" stroke="#1f456e" stroke-width="1"/>
+              <text x="846" y="70" text-anchor="middle" font-size="14" font-weight="bold" fill="#00E5FF">中控戰情</text>
+
+              <rect x="746" y="90" width="100" height="72" rx="6" fill="rgba(255,179,77,0.08)" stroke="#7a5a2e" stroke-width="1"/>
+              <text x="796" y="112" text-anchor="middle" font-size="11" fill="#FFB84D">⚡ 能源</text>
+              <text x="796" y="134" text-anchor="middle" font-size="14" font-weight="bold" fill="#fff">42.5 kW</text>
+              <text x="796" y="152" text-anchor="middle" font-size="9" fill="#7fa6c9">實時功耗</text>
+
+              <rect x="858" y="90" width="100" height="72" rx="6" fill="rgba(236,64,122,0.08)" stroke="#7a2e48" stroke-width="1"/>
+              <text x="908" y="112" text-anchor="middle" font-size="11" fill="#F06292">🔒 安全</text>
+              <text x="908" y="134" text-anchor="middle" font-size="14" font-weight="bold" fill="#fff">287</text>
+              <text x="908" y="152" text-anchor="middle" font-size="9" fill="#7fa6c9">設備在線</text>
+
+              <rect x="746" y="174" width="100" height="72" rx="6" fill="rgba(66,165,245,0.08)" stroke="#2e5a7a" stroke-width="1"/>
+              <text x="796" y="196" text-anchor="middle" font-size="11" fill="#42A5F5">🚨 告警</text>
+              <text x="796" y="218" text-anchor="middle" font-size="14" font-weight="bold" fill="#fff">8</text>
+              <text x="796" y="236" text-anchor="middle" font-size="9" fill="#7fa6c9">今日累計</text>
+
+              <rect x="858" y="174" width="100" height="72" rx="6" fill="rgba(102,187,106,0.08)" stroke="#2e6a3a" stroke-width="1"/>
+              <text x="908" y="196" text-anchor="middle" font-size="11" fill="#66BB6A">🔧 派工</text>
+              <text x="908" y="218" text-anchor="middle" font-size="14" font-weight="bold" fill="#fff">3</text>
+              <text x="908" y="236" text-anchor="middle" font-size="9" fill="#7fa6c9">待派工</text>
+
+              <rect x="746" y="262" width="212" height="60" rx="6" fill="rgba(0,168,255,0.06)" stroke="#1f456e" stroke-width="1"/>
+              <text x="758" y="284" font-size="11" fill="#9fc0db">整體稼動率</text>
+              <text x="946" y="284" text-anchor="end" font-size="13" font-weight="bold" fill="#00E676">97.3%</text>
+              <rect x="758" y="296" width="188" height="8" rx="4" fill="#13314e"/>
+              <rect x="758" y="296" width="183" height="8" rx="4" fill="#00E676"/>
+
+              <rect x="746" y="334" width="212" height="56" rx="6" fill="rgba(0,229,255,0.06)" stroke="#1f456e" stroke-width="1"/>
+              <text x="758" y="356" font-size="11" fill="#9fc0db">全樓在線人數</text>
+              <text x="946" y="372" text-anchor="end" font-size="20" font-weight="bold" fill="#00E5FF">59 人</text>
+            </g>
+          </svg>
+        </div>
+
+        <!-- 動態圖例（隨圖層更新） -->
+        <div class="war-legend" id="floor-legend-content"></div>
+
+        <!-- 最新事件跑馬燈 -->
+        <div class="war-marquee">
+          <div class="war-mq-track">
+            <span class="war-mq-item crit"><span class="dot"></span>C區 CO₂ 950ppm 超標，新風已提速至 95%</span>
+            <span class="war-mq-item warn"><span class="dot"></span>E區 空間稼動 76%，低於目標值</span>
+            <span class="war-mq-item warn"><span class="dot"></span>B區 發現 1 件待處理告警</span>
+            <span class="war-mq-item info"><span class="dot"></span>全樓在線 59 人，C 運動訓練區為尖峰</span>
+            <span class="war-mq-item info"><span class="dot"></span>待派工 3 件 · 保全交接 14:00</span>
+            <span class="war-mq-item crit"><span class="dot"></span>告警中心今日累計 8 件，3 件即時待辦</span>
+          </div>
+        </div>
+
+        <!-- 自動閉環控制台（即時動態） -->
+        <div id="autoloop-panel"></div>
+      </div>
+    `;
+
+    /* 2. 子系統狀態總覽（11個卡片） */
+    contentHtml += `
+      <div class="section-title">全系統狀態總覽</div>
+      <div id="system-cards-grid" class="grid grid-cols-4 gap-2 mb-4">
+    `;
+
+    // 遍歷所有子系統生成卡片
+    const subsystemOrder = ['PWR', 'HVAC', 'AIR', 'FIRE', 'WTR', 'AST', 'SUP', 'ACC', 'SCH', 'DSP', 'CCTV', 'SEC', 'STF', 'RPT', 'VND'];
+    const codeToFile = { PWR:'power', HVAC:'hvac', AIR:'air', FIRE:'fire', WTR:'water', AST:'asset', SUP:'supplies', ACC:'access', CLN:'access', SCH:'scheduling', DSP:'dispatch', CCTV:'cctv', SEC:'security', STF:'staff', RPT:'report', VND:'vendor' };
+    subsystemOrder.forEach(subsys => {
+      const sys = FM.spaces.subsystems[subsys];
+      const stats = FM.mockData.systemStats[subsys];
+      const alerts = FM.getAlertsForSystem(subsys);
+      const alertCount = alerts.length;
+      const healthLevel = stats.running >= 98 ? 'ok' : stats.running >= 95 ? 'warn' : 'crit';
+      const healthText = stats.running >= 98 ? '健康' : stats.running >= 95 ? '警告' : '異常';
+
+      contentHtml += `
+        <div class="card" onclick="location.href='modules/${codeToFile[subsys] || subsys.toLowerCase()}.html'" style="cursor: pointer;">
+          <div class="card-body">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+              <div style="font-weight: bold; font-size: 14px;">${sys.name}</div>
+              <span class="dot ${healthLevel}"></span>
+            </div>
+            <div style="font-size: 24px; font-weight: bold; color: #0054A7; margin-bottom: 8px;">
+              ${stats.running}%
+            </div>
+            <div style="font-size: 12px; color: #666; margin-bottom: 10px;">
+              稼動率 | ${healthText}
+            </div>
+            <div style="font-size: 11px; background: #f5f5f5; padding: 8px; border-radius: 4px; text-align: center;">
+              <span class="badge ${alertCount > 0 ? 'warn' : 'ok'}">
+                <span class="dot"></span> ${alertCount} 告警
+              </span>
+            </div>
+          </div>
+        </div>
+      `;
+    });
+
+    contentHtml += `</div>`;
+
+    /* 3. 即時告警動態流（Tab切換：緊急/一般/資訊） */
+    contentHtml += `
+      <div class="section-title">即時告警動態流</div>
+      <div style="margin-bottom: 20px;">
+        <div style="display: flex; gap: 10px; margin-bottom: 15px; border-bottom: 1px solid #ddd; padding-bottom: 10px;">
+          <button class="btn btn-primary btn-small" onclick="FM.switchAlertTab('all')" id="tab-all">全部</button>
+          <button class="btn btn-secondary btn-small" onclick="FM.switchAlertTab('crit')" id="tab-crit">緊急</button>
+          <button class="btn btn-secondary btn-small" onclick="FM.switchAlertTab('warn')" id="tab-warn">一般</button>
+          <button class="btn btn-secondary btn-small" onclick="FM.switchAlertTab('info')" id="tab-info">資訊</button>
+        </div>
+        <div id="alert-flow-container">
+    `;
+
+    // 預設顯示所有未確認告警
+    const alertsToShow = FM.alerts.filter(a => !a.confirmed).sort((a, b) => b.time - a.time);
+    if (alertsToShow.length === 0) {
+      contentHtml += '<div style="text-align: center; color: #999; padding: 40px;">無未確認告警</div>';
+    } else {
+      alertsToShow.forEach(alert => {
+        const levelColor = alert.level === 'crit' ? '#C0392B' : alert.level === 'warn' ? '#D35400' : '#1A7A4A';
+        const levelText = alert.level === 'crit' ? '緊急' : alert.level === 'warn' ? '一般' : '資訊';
+
+        contentHtml += `
+          <div class="card alert-row" style="margin-bottom: 10px; border-left: 4px solid ${levelColor};">
+            <div class="card-body" style="padding: 12px;">
+              <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
+                <div style="flex: 1;">
+                  <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+                    <span class="badge ${alert.level}"><span class="dot"></span>${levelText}</span>
+                    ${FM.spaceTag(alert.space)}
+                  </div>
+                  <div style="font-size: 14px; font-weight: 500; color: #333; margin-bottom: 6px;">
+                    ${alert.msg}
+                  </div>
+                  <div style="font-size: 12px; color: #666;">
+                    <span>⏰ ${FM.timeAgo(alert.time)}</span> |
+                    <span>🔧 ${alert.aiAction}</span>
+                  </div>
+                </div>
+                <button class="btn btn-success btn-small" onclick="FM.confirmAlert('${alert.id}'); FM.switchAlertTab('all');">
+                  確認
+                </button>
+              </div>
+            </div>
+          </div>
+        `;
+      });
+    }
+
+    contentHtml += `
+        </div>
+      </div>
+    `;
+
+    /* (4. 樓層平面圖已升級為頂部 7F 戰情主視覺) */
+
+    /* 5. 近24h能耗趨勢 Sparkline */
+    contentHtml += `
+      <div class="section-title">近24小時能耗趨勢 (kW)</div>
+      <div class="card mb-4">
+        <div class="card-body">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+            <div>
+              <div style="font-size: 24px; font-weight: bold; color: #0054A7;">42.5 kW</div>
+              <div style="font-size: 12px; color: #666;">當前實時功耗</div>
+            </div>
+            <div style="text-align: right;">
+              <div style="font-size: 14px; color: #1A7A4A;">▼ 5.2% vs昨日</div>
+              <div style="font-size: 12px; color: #666;">同比降低</div>
+            </div>
+          </div>
+
+          <!-- 能耗折線圖 -->
+          <svg width="100%" height="200" viewBox="0 0 600 200" xmlns="http://www.w3.org/2000/svg" style="overflow: visible;">
+            <!-- 背景網格 -->
+            <defs>
+              <linearGradient id="powerGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" style="stop-color:#008CD6;stop-opacity:0.3" />
+                <stop offset="100%" style="stop-color:#008CD6;stop-opacity:0" />
+              </linearGradient>
+              <pattern id="grid" width="50" height="20" patternUnits="userSpaceOnUse">
+                <path d="M 50 0 L 0 0 0 20" fill="none" stroke="#f0f0f0" stroke-width="0.5"/>
+              </pattern>
+            </defs>
+
+            <rect width="600" height="200" fill="url(#grid)"/>
+
+            <!-- Y軸標籤 -->
+            <text x="5" y="20" font-size="10" fill="#999">60</text>
+            <text x="5" y="60" font-size="10" fill="#999">45</text>
+            <text x="5" y="100" font-size="10" fill="#999">30</text>
+            <text x="5" y="140" font-size="10" fill="#999">15</text>
+            <text x="5" y="180" font-size="10" fill="#999">0</text>
+
+            <!-- 能耗曲線 (模擬24小時數據) -->
+            <polyline points="40,120 80,110 120,115 160,105 200,100 240,85 280,90 320,100 360,110 400,105 440,115 480,125 520,135 560,140"
+                      fill="none" stroke="#008CD6" stroke-width="2" stroke-linejoin="round"/>
+
+            <!-- 漸變填充 -->
+            <polygon points="40,120 80,110 120,115 160,105 200,100 240,85 280,90 320,100 360,110 400,105 440,115 480,125 520,135 560,140 560,200 40,200"
+                     fill="url(#powerGradient)"/>
+
+            <!-- 資料點標記 -->
+            <circle cx="560" cy="140" r="4" fill="#008CD6" stroke="white" stroke-width="2"/>
+
+            <!-- X軸標籤 (時間) -->
+            <text x="40" y="195" font-size="10" fill="#999" text-anchor="middle">0:00</text>
+            <text x="160" y="195" font-size="10" fill="#999" text-anchor="middle">6:00</text>
+            <text x="280" y="195" font-size="10" fill="#999" text-anchor="middle">12:00</text>
+            <text x="400" y="195" font-size="10" fill="#999" text-anchor="middle">18:00</text>
+            <text x="560" y="195" font-size="10" fill="#999" text-anchor="middle">現在</text>
+          </svg>
+
+          <!-- 統計資訊 -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 15px; margin-top: 20px;">
+            <div style="text-align: center; padding: 12px; background: #f5f5f5; border-radius: 4px;">
+              <div style="font-size: 14px; color: #666;">平均</div>
+              <div style="font-size: 18px; font-weight: bold; color: #333;">35.2 kW</div>
+            </div>
+            <div style="text-align: center; padding: 12px; background: #f5f5f5; border-radius: 4px;">
+              <div style="font-size: 14px; color: #666;">峰值</div>
+              <div style="font-size: 18px; font-weight: bold; color: #C0392B;">48.1 kW</div>
+            </div>
+            <div style="text-align: center; padding: 12px; background: #f5f5f5; border-radius: 4px;">
+              <div style="font-size: 14px; color: #666;">谷值</div>
+              <div style="font-size: 18px; font-weight: bold; color: #1A7A4A;">18.5 kW</div>
+            </div>
+            <div style="text-align: center; padding: 12px; background: #f5f5f5; border-radius: 4px;">
+              <div style="font-size: 14px; color: #666;">總耗能</div>
+              <div style="font-size: 18px; font-weight: bold; color: #0054A7;">846.5 kWh</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    /* 注入內容 */
+    FM.loadContent(contentHtml);
+
+    /* 平面圖初次著色（預設空品層）+ 圖例 + KPI 數字跳動 */
+    FM.updateFloorDiagram();
+    FM.animateKpis();
+
+    /* 圖層自動輪播控制 */
+    function syncRotateBtn(on) {
+      const b = document.getElementById('layer-rotate-btn');
+      if (!b) return;
+      if (on === undefined) on = !!FM.layerRotation.timer;
+      b.textContent = on ? '⏸ 輪播中' : '▶ 自動輪播';
+      b.classList.toggle('on', on);
+    }
+    function toggleRotate() { syncRotateBtn(FM.toggleLayerRotation()); }
+    function pickLayer(k) { FM.stopLayerRotation(); FM.switchFloorLayer(k); syncRotateBtn(false); }
+
+    /* 預設開啟自動輪播 */
+    FM.startLayerRotation();
+    syncRotateBtn(true);
+
+    /* 自動閉環控制台：即時動態 + 控制 */
+    function renderAutoLoop() {
+      const p = document.getElementById('autoloop-panel');
+      if (!p) return;
+      const L = FM.autoLoop;
+      const liveCrit = FM.alerts.filter(a => a.level === 'crit' && !a.confirmed).length;
+      const liveWarn = FM.alerts.filter(a => a.level === 'warn' && !a.confirmed).length;
+      const inwork = FM.alerts.filter(a => a.kind === 'auto' && a.status === '進行中').length;
+      const feed = L.log.slice(0, 6).map(e =>
+        `<div style="padding:3px 0;font-size:12px;color:#bcd6ef;"><span style="color:#5f86a9;">${e.time.toLocaleTimeString('zh-TW', { hour12: false })}</span>　${e.msg}</div>`).join('');
+      p.innerHTML = `
+        <div style="margin-top:14px;border-top:1px solid #1f456e;padding-top:12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+              <span style="display:inline-flex;align-items:center;gap:7px;font-weight:700;color:${L.running ? '#00E676' : '#9fc0db'};">
+                <span style="width:9px;height:9px;border-radius:50%;background:${L.running ? '#00E676' : '#7f8c9b'};box-shadow:${L.running ? '0 0 8px #00E676' : 'none'};animation:${L.running ? 'liveBlink 1.4s ease-in-out infinite' : 'none'};"></span>
+                自動閉環${L.running ? '執行中' : '已暫停'}
+              </span>
+              <span style="font-size:12px;color:#7fa6c9;">第 ${L.ticks} 輪 · 事件 ${L.stats.spawned} · 派工 ${L.stats.dispatched} · 結案 ${L.stats.completed} · 推播 ${L.stats.pushed}</span>
+            </div>
+            <button onclick="toggleLoop()" class="war-rotate-btn ${L.running ? 'on' : ''}" style="margin-left:0;">${L.running ? '⏸ 暫停閉環' : '▶ 啟動閉環'}</button>
+          </div>
+          <div style="margin-top:10px;display:flex;gap:16px;font-size:12px;color:#cfe3f5;">
+            <span>🔴 即時緊急 <b>${liveCrit}</b></span><span>🟠 注意 <b>${liveWarn}</b></span><span>🔧 處理中 <b>${inwork}</b></span>
+          </div>
+          <div style="margin-top:8px;max-height:132px;overflow-y:auto;background:rgba(3,12,24,.4);border:1px solid #16324f;border-radius:8px;padding:8px 10px;">${feed || '<div style="color:#5f86a9;font-size:12px;">等待事件…</div>'}</div>
+        </div>`;
+    }
+    function toggleLoop() { FM.toggleAutoLoop(); renderAutoLoop(); }
+
+    FM.autoLoop.onTick = renderAutoLoop;
+    renderAutoLoop();
+
+    /* ─────────────────────────────────────────────────────────────────────── */
+    /* Tab切換邏輯 */
+    /* ─────────────────────────────────────────────────────────────────────── */
+    FM.switchAlertTab = function(level) {
+      // 更新按鈕樣式
+      document.getElementById('tab-all').className = level === 'all' ? 'btn btn-primary btn-small' : 'btn btn-secondary btn-small';
+      document.getElementById('tab-crit').className = level === 'crit' ? 'btn btn-primary btn-small' : 'btn btn-secondary btn-small';
+      document.getElementById('tab-warn').className = level === 'warn' ? 'btn btn-primary btn-small' : 'btn btn-secondary btn-small';
+      document.getElementById('tab-info').className = level === 'info' ? 'btn btn-primary btn-small' : 'btn btn-secondary btn-small';
+
+      // 過濾告警
+      let filtered = FM.alerts;
+      if (level !== 'all') {
+        filtered = FM.alerts.filter(a => a.level === level);
+      }
+      filtered = filtered.filter(a => !a.confirmed).sort((a, b) => b.time - a.time);
+
+      // 重新渲染告警流
+      let alertHtml = '';
+      if (filtered.length === 0) {
+        alertHtml = '<div style="text-align: center; color: #999; padding: 40px;">無告警</div>';
+      } else {
+        filtered.forEach(alert => {
+          const levelColor = alert.level === 'crit' ? '#C0392B' : alert.level === 'warn' ? '#D35400' : '#1A7A4A';
+          const levelText = alert.level === 'crit' ? '緊急' : alert.level === 'warn' ? '一般' : '資訊';
+
+          alertHtml += `
+            <div class="card alert-row" style="margin-bottom: 10px; border-left: 4px solid ${levelColor};">
+              <div class="card-body" style="padding: 12px;">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
+                  <div style="flex: 1;">
+                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+                      <span class="badge ${alert.level}"><span class="dot"></span>${levelText}</span>
+                      ${FM.spaceTag(alert.space)}
+                    </div>
+                    <div style="font-size: 14px; font-weight: 500; color: #333; margin-bottom: 6px;">
+                      ${alert.msg}
+                    </div>
+                    <div style="font-size: 12px; color: #666;">
+                      <span>⏰ ${FM.timeAgo(alert.time)}</span> |
+                      <span>🔧 ${alert.aiAction}</span>
+                    </div>
+                  </div>
+                  <button class="btn btn-success btn-small" onclick="FM.confirmAlert('${alert.id}'); FM.switchAlertTab('all');">
+                    確認
+                  </button>
+                </div>
+              </div>
+            </div>
+          `;
+        });
+      }
+
+      // 插入新的告警流容器
+      const container = document.getElementById('alert-flow-container');
+      if (container) {
+        container.innerHTML = alertHtml;
+      }
+    };
+  </script>
+</body>
+</html>

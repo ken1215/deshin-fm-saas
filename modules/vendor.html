@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>外包商管理 — 德新行政管理平台</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+  <div id="fm-shell"></div>
+  <div id="fm-content"></div>
+
+  <script src="../assets/app.js"></script>
+  <script>
+    // ========================================================================
+    // VND 外包商管理模組（名冊 / 合約到期 / 績效評等 / 證照保險）
+    // ========================================================================
+    FM.renderShell('vendor', '外包商管理 VND');
+
+    // 相對天數（contract/license/insurance 到期剩餘天；負數=已到期）。即時計算，與絕對日期無關
+    const vendors = [
+      { id:'V01', name:'大金空調服務', cat:'空調', scope:'VRV/冰水主機保養、冷媒、濾網', person:'林志豪', line:'@daikin-fm', ext:'0912-345-678',
+        contractDays:18, rating:4.6, sla:96, respHrs:4, jobsDone:128, jobsMonth:12, licenseName:'冷凍空調技術士', licenseDays:150, insuranceDays:200 },
+      { id:'V02', name:'新光保全', cat:'保全', scope:'駐衛保全、巡邏、門禁監控', person:'王美玲', line:'@shin-kong-sec', ext:'0933-222-333',
+        contractDays:240, rating:4.3, sla:94, respHrs:0.5, jobsDone:310, jobsMonth:30, licenseName:'保全業許可', licenseDays:300, insuranceDays:25 },
+      { id:'V03', name:'潔豐環保清潔', cat:'清潔', scope:'日常清潔、消毒、垃圾/醫廢清運協作', person:'張淑芬', line:'@jiefeng', ext:'0955-333-444',
+        contractDays:12, rating:4.0, sla:91, respHrs:6, jobsDone:540, jobsMonth:60, licenseName:'清潔服務證', licenseDays:90, insuranceDays:120 },
+      { id:'V04', name:'立元消防', cat:'消防', scope:'消防定檢、滅火器/警報維護、演練', person:'黃國誠', line:'@liyuan-fire', ext:'0966-444-555',
+        contractDays:150, rating:4.7, sla:98, respHrs:3, jobsDone:42, jobsMonth:2, licenseName:'消防設備士', licenseDays:40, insuranceDays:80 },
+      { id:'V05', name:'聯華醫療設備', cat:'醫療設備', scope:'復健儀器保養、校正、零件', person:'吳佩珊', line:'@lh-medical', ext:'0977-555-666',
+        contractDays:-8, rating:4.5, sla:95, respHrs:8, jobsDone:88, jobsMonth:6, licenseName:'醫療器材商許可', licenseDays:100, insuranceDays:100 },
+      { id:'V06', name:'達科資訊', cat:'資訊系統', scope:'FM 平台/CCTV/網路設備維運', person:'蔡承翰', line:'@dako-it', ext:'0988-666-777',
+        contractDays:60, rating:4.2, sla:93, respHrs:5, jobsDone:156, jobsMonth:14, licenseName:'資安服務', licenseDays:200, insuranceDays:180 },
+      { id:'V07', name:'綠水管理', cat:'給排水', scope:'水塔清洗、水質檢測、給排水維修', person:'劉文德', line:'@greenwater', ext:'0900-777-888',
+        contractDays:28, rating:3.9, sla:90, respHrs:6, jobsDone:36, jobsMonth:3, licenseName:'自來水管承裝', licenseDays:55, insuranceDays:-3 }
+    ];
+    const catColor = { '空調':'#004E89','保全':'#7B6079','清潔':'#2A9D8F','消防':'#C0392B','醫療設備':'#A23B72','資訊系統':'#3D5A80','給排水':'#2E86AB' };
+
+    function vstat(days){ return days < 0 ? 'expired' : days <= 30 ? 'due' : 'ok'; }
+    function vdate(days){ return new Date(Date.now() + days*86400000).toLocaleDateString('zh-TW'); }
+    function vbadge(days){ const s=vstat(days); const m={expired:['crit','已到期'],due:['warn','即將到期'],ok:['ok','有效']}[s]; return `<span class="badge ${m[0]}">${m[1]}</span>`; }
+    function stars(r){ const f=Math.round(r); return '★'.repeat(f)+'☆'.repeat(5-f); }
+
+    let tab='list';
+    function sw(t){ tab=t; render(); }
+
+    function render(){
+      const expired = vendors.filter(v=>v.contractDays<0).length;
+      const dueSoon = vendors.filter(v=>v.contractDays>=0&&v.contractDays<=30).length;
+      const certIssue = vendors.filter(v=>v.licenseDays<=30||v.insuranceDays<=30).length;
+      let h=`
+        <div class="grid grid-cols-4 gap-3 mb-4">
+          <div class="kpi"><div class="kpi-icon">🤝</div><div class="kpi-value">${vendors.length}</div><div class="kpi-unit">家</div><div class="kpi-label">合作外包商</div></div>
+          <div class="kpi ${expired?'danger':'success'}"><div class="kpi-icon">📄</div><div class="kpi-value">${expired}</div><div class="kpi-unit">家</div><div class="kpi-label">合約已到期</div></div>
+          <div class="kpi ${dueSoon?'warning':'success'}"><div class="kpi-icon">⏰</div><div class="kpi-value">${dueSoon}</div><div class="kpi-unit">家</div><div class="kpi-label">30天內到期</div></div>
+          <div class="kpi ${certIssue?'warning':'success'}"><div class="kpi-icon">🪪</div><div class="kpi-value">${certIssue}</div><div class="kpi-unit">家</div><div class="kpi-label">證照/保險待更新</div></div>
+        </div>
+        <div class="card mb-4"><div class="card-header"><div style="display:flex;gap:8px;border-bottom:2px solid #f5f5f5;flex-wrap:wrap;">
+          <button class="tab-btn ${tab==='list'?'active':''}" onclick="sw('list')">📋 外包商名冊</button>
+          <button class="tab-btn ${tab==='contract'?'active':''}" onclick="sw('contract')">📄 合約到期 (${expired+dueSoon})</button>
+          <button class="tab-btn ${tab==='perf'?'active':''}" onclick="sw('perf')">📊 績效評等</button>
+          <button class="tab-btn ${tab==='cert'?'active':''}" onclick="sw('cert')">🪪 證照/保險</button>
+        </div></div><div class="card-body">${content()}</div></div>`;
+      FM.loadContent(h);
+    }
+    function content(){ if(tab==='contract')return contractView(); if(tab==='perf')return perfView(); if(tab==='cert')return certView(); return listView(); }
+
+    function listView(){
+      let h='<div class="grid grid-cols-2 gap-3">';
+      vendors.forEach(v=>{
+        h+=`<div class="card" style="border-left:4px solid ${catColor[v.cat]||'#888'};">
+          <div class="card-header"><div style="display:flex;justify-content:space-between;align-items:center;">
+            <div><div class="font-semibold">${v.name}</div><div class="text-xs text-muted">${v.id} · <span style="color:${catColor[v.cat]};">${v.cat}</span></div></div>
+            <div style="text-align:right;"><div style="color:#F39C12;font-size:13px;">${stars(v.rating)}</div><div class="text-xs text-muted">${v.rating.toFixed(1)} / 5</div></div>
+          </div></div>
+          <div class="card-body" style="font-size:13px;line-height:1.9;">
+            <div><b>服務範圍：</b>${v.scope}</div>
+            <div><b>窗口：</b>${v.person}　📟 ${v.ext}　💬 ${v.line}</div>
+            <div><b>合約到期：</b>${vdate(v.contractDays)} ${vbadge(v.contractDays)}</div>
+            <div style="margin-top:8px;">
+              <a class="btn btn-small" href="https://line.me/R/ti/p/${v.line}" target="_blank" style="background:#06C755;color:#fff;text-decoration:none;">💬 LINE 聯絡</a>
+              <button class="btn btn-primary btn-small" onclick="callVendor('${v.id}')">🛠 立即叫修</button>
+            </div>
+          </div></div>`;
+      });
+      return h+'</div>';
+    }
+
+    function contractView(){
+      const rows = vendors.map(v=>Object.assign({}, v, {st:vstat(v.contractDays)}))
+        .sort((a,b)=>({expired:0,due:1,ok:2}[a.st]-{expired:0,due:1,ok:2}[b.st]) || a.contractDays-b.contractDays);
+      const expired=rows.filter(r=>r.st==='expired').length, due=rows.filter(r=>r.st==='due').length;
+      let h='';
+      if(expired+due>0){
+        h+=`<div style="background:#fff3e0;border-left:4px solid #D35400;padding:12px 16px;border-radius:6px;margin-bottom:16px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+            <div><strong style="color:#D35400;">⚠ 合約警示</strong>　${expired} 家已到期、${due} 家 30 天內到期，請啟動續約/重新議價。</div>
+            <button class="btn btn-small" style="background:#06C755;color:#fff;border:none;" onclick="pushContract()">💬 推播採購/主管群</button>
+          </div></div>`;
+      } else h+=`<div style="background:#f0fff4;border-left:4px solid #00A94F;padding:12px 16px;border-radius:6px;margin-bottom:16px;"><strong style="color:#1A7A4A;">✓ 所有合約皆在效期內</strong></div>`;
+      h+='<table class="dtable"><thead><tr><th>外包商</th><th>類別</th><th>服務範圍</th><th>合約到期日</th><th>剩餘</th><th>狀態</th><th>窗口</th></tr></thead><tbody>';
+      rows.forEach(v=>{
+        const c={expired:'#C0392B',due:'#D35400',ok:'#1A7A4A'}[v.st];
+        const bg={expired:'#ffebee',due:'#fff3e0',ok:''}[v.st];
+        const rem = v.contractDays<0?`逾期 ${Math.abs(v.contractDays)} 天`:`剩 ${v.contractDays} 天`;
+        h+=`<tr style="background:${bg};"><td class="font-semibold text-sm">${v.name}</td><td class="text-sm" style="color:${catColor[v.cat]};">${v.cat}</td>
+          <td class="text-sm text-muted">${v.scope}</td><td class="text-sm">${vdate(v.contractDays)}</td>
+          <td class="text-sm" style="color:${c};font-weight:600;">${rem}</td><td>${vbadge(v.contractDays)}</td><td class="text-sm">${v.person} · ${v.ext}</td></tr>`;
+      });
+      return h+'</tbody></table>';
+    }
+
+    function perfView(){
+      const ranked=vendors.slice().sort((a,b)=>b.rating-a.rating);
+      let h='<div class="text-muted text-sm" style="margin-bottom:12px;">依綜合評分排序（評分／SLA 達成率／平均回應時間／當月工單）</div>';
+      h+='<table class="dtable"><thead><tr><th>排名</th><th>外包商</th><th>類別</th><th>評分</th><th>SLA 達成</th><th>平均回應</th><th>當月/累計工單</th></tr></thead><tbody>';
+      ranked.forEach((v,i)=>{
+        const slaColor=v.sla>=97?'#1A7A4A':v.sla>=93?'#D35400':'#C0392B';
+        h+=`<tr><td><b>${i+1}</b></td><td class="font-semibold text-sm">${v.name}</td><td class="text-sm" style="color:${catColor[v.cat]};">${v.cat}</td>
+          <td style="color:#F39C12;font-size:13px;">${stars(v.rating)} <span class="text-muted">${v.rating.toFixed(1)}</span></td>
+          <td><span style="color:${slaColor};font-weight:700;">${v.sla}%</span><div style="height:5px;background:#eee;border-radius:3px;margin-top:3px;overflow:hidden;"><div style="height:100%;width:${v.sla}%;background:${slaColor};"></div></div></td>
+          <td class="text-sm">${v.respHrs} 小時</td><td class="text-sm">${v.jobsMonth} / ${v.jobsDone}</td></tr>`;
+      });
+      return h+'</tbody></table>';
+    }
+
+    function certView(){
+      let h='<table class="dtable"><thead><tr><th>外包商</th><th>類別</th><th>證照</th><th>證照到期</th><th>狀態</th><th>保險到期</th><th>狀態</th></tr></thead><tbody>';
+      vendors.forEach(v=>{
+        h+=`<tr><td class="font-semibold text-sm">${v.name}</td><td class="text-sm" style="color:${catColor[v.cat]};">${v.cat}</td>
+          <td class="text-sm">${v.licenseName}</td><td class="text-sm">${vdate(v.licenseDays)} <span class="text-muted">(${v.licenseDays<0?'逾期'+Math.abs(v.licenseDays):'剩'+v.licenseDays}天)</span></td><td>${vbadge(v.licenseDays)}</td>
+          <td class="text-sm">${vdate(v.insuranceDays)} <span class="text-muted">(${v.insuranceDays<0?'逾期'+Math.abs(v.insuranceDays):'剩'+v.insuranceDays}天)</span></td><td>${vbadge(v.insuranceDays)}</td></tr>`;
+      });
+      h+='</tbody></table><div class="text-muted text-sm" style="margin-top:10px;">＊公共意外責任險、勞保與專業證照為進場必要條件，到期前 30 天系統提醒並通知採購續辦。</div>';
+      return h;
+    }
+
+    // 互動
+    function callVendor(id){
+      const v=vendors.find(x=>x.id===id); if(!v) return;
+      if(FM.logAction) FM.logAction('外包商叫修', v.name, v.cat);
+      FM.pushLine(['eng'], `【外包商叫修】${v.name}（${v.cat}）\n窗口：${v.person} ${v.ext}\n服務：${v.scope}`, 'warn', true);
+      FM.toast('已發出叫修並通知工務群：'+v.name,'ok');
+    }
+    function pushContract(){
+      const exp=vendors.filter(v=>v.contractDays<0), due=vendors.filter(v=>v.contractDays>=0&&v.contractDays<=30);
+      const lines=exp.map(v=>`🔴已到期 ${v.name}（逾 ${Math.abs(v.contractDays)} 天）`).concat(due.map(v=>`🟠將到期 ${v.name}（剩 ${v.contractDays} 天）`));
+      FM.pushLine(['mgr','eng'], '【外包商合約警示】\n'+lines.join('\n'), exp.length?'warn':'info', true);
+      FM.toast('已推播合約到期提醒至採購/主管群','ok');
+    }
+
+    render();
+  </script>
+</body>
+</html>

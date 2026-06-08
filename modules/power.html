@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>電力監測 — 德新行政管理平台</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+  <script src="../assets/app.js"></script>
+  <script>
+    /* ========================================================================
+       電力監測模組初始化
+       ======================================================================== */
+    FM.renderShell('power', '⚡ 電力監測 - 德新行政管理平台');
+
+    /* ────────────────────────────────────────────────────────────────────── */
+    /* 電力系統 Mock 資料                                                      */
+    /* ────────────────────────────────────────────────────────────────────── */
+    const powerData = {
+      // 契約容量與實時負載
+      contractCapacity: 200, // kW
+      currentLoad: 156.8,    // kW
+      peakForecast: 172.5,   // 尖峰預測 kW
+
+      // 各迴路電表
+      circuits: [
+        {
+          code: '7-A1-PWR-01',
+          name: 'A1-掛號大廳',
+          voltage: '220V',
+          current: 12.3,
+          power: 2.71,
+          status: 'ok'
+        },
+        {
+          code: '7-A2-PWR-02',
+          name: 'A2-醫師診間',
+          voltage: '220V',
+          current: 18.6,
+          power: 4.09,
+          status: 'ok'
+        },
+        {
+          code: '7-A3-PWR-03',
+          name: 'A3-候診區',
+          voltage: '220V',
+          current: 14.2,
+          power: 3.13,
+          status: 'ok'
+        },
+        {
+          code: '7-B1-PWR-04',
+          name: 'B1-震波治療室',
+          voltage: '220V',
+          current: 42.1,
+          power: 9.26,
+          status: 'warn'
+        },
+        {
+          code: '7-B3-PWR-01',
+          name: 'B3-震波治療室(220V專迴)',
+          voltage: '220V',
+          current: 54.3,
+          power: 11.95,
+          status: 'crit'
+        },
+        {
+          code: '7-B2-PWR-05',
+          name: 'B2-運動推傷室',
+          voltage: '220V',
+          current: 15.8,
+          power: 3.48,
+          status: 'ok'
+        },
+        {
+          code: '7-C1-PWR-06',
+          name: 'C1-有氧訓練區',
+          voltage: '220V',
+          current: 28.5,
+          power: 6.27,
+          status: 'ok'
+        },
+        {
+          code: '7-C2-PWR-07',
+          name: 'C2-肌力訓練室',
+          voltage: '220V',
+          current: 31.2,
+          power: 6.86,
+          status: 'ok'
+        },
+        {
+          code: '7-D1-PWR-08',
+          name: 'D1-辦公室',
+          voltage: '220V',
+          current: 8.9,
+          power: 1.96,
+          status: 'ok'
+        },
+        {
+          code: '7-D2-PWR-09',
+          name: 'D2-會議室',
+          voltage: '220V',
+          current: 11.4,
+          power: 2.51,
+          status: 'ok'
+        },
+        {
+          code: '7-E1-PWR-UPS',
+          name: 'E1-UPS不斷電系統',
+          voltage: '220V',
+          current: 6.2,
+          power: 1.36,
+          status: 'ok'
+        }
+      ],
+
+      // 各區域負載統計
+      areaLoads: [
+        { name: '接待門診(A)', load: 9.93, maxLoad: 12, icon: '🏥' },
+        { name: '物理治療(B)', load: 30.96, maxLoad: 35, icon: '🏥' },
+        { name: '運動訓練(C)', load: 13.13, maxLoad: 16, icon: '💪' },
+        { name: '後勤行政(D)', load: 4.47, maxLoad: 6, icon: '📋' },
+        { name: '輔助設施(E)', load: 1.36, maxLoad: 3, icon: '🚪' }
+      ],
+
+      // 24小時負載趨勢 (已過小時)
+      loadTrend: [
+        22, 21, 18, 16, 15, 18, 35, 52, 89, 112,
+        134, 145, 152, 158, 156, 145, 138, 142, 148, 155,
+        162, 158, 125, 68
+      ],
+
+      // 告警與事件
+      powerAlerts: [
+        {
+          id: 'PWR-001',
+          code: '7-B3-PWR-01',
+          msg: 'B3震波專迴過載 (54.3A)',
+          level: 'crit',
+          time: new Date(Date.now() - 5 * 60000),
+          action: '自動跳脫+短訊通知',
+          confirmed: false
+        },
+        {
+          id: 'PWR-002',
+          code: '7-B1-PWR-04',
+          msg: '震波治療室功率接近上限',
+          level: 'warn',
+          time: new Date(Date.now() - 15 * 60000),
+          action: '監視+建議分散用電',
+          confirmed: false
+        },
+        {
+          id: 'PWR-003',
+          code: '7-A1-PWR-01',
+          msg: '掛號大廳電表正常',
+          level: 'info',
+          time: new Date(Date.now() - 1 * 3600000),
+          action: '日常監測',
+          confirmed: true
+        }
+      ]
+    };
+
+    /* ────────────────────────────────────────────────────────────────────── */
+    /* UI 狀態與互動                                                            */
+    /* ────────────────────────────────────────────────────────────────────── */
+    let currentTab = 'overview'; // 'overview', 'circuits', 'alerts', 'forecast'
+
+    function switchTab(tabName) {
+      currentTab = tabName;
+      renderContent();
+    }
+
+    function confirmPowerAlert(alertId) {
+      const alert = powerData.powerAlerts.find(a => a.id === alertId);
+      if (alert) {
+        alert.confirmed = true;
+        renderContent();
+      }
+    }
+
+    /* ────────────────────────────────────────────────────────────────────── */
+    /* 主內容構建                                                              */
+    /* ────────────────────────────────────────────────────────────────────── */
+    function renderContent() {
+      let html = '';
+
+      // Tab 切換頁籤
+      html += `
+        <div class="tab-container">
+          <button class="btn btn-secondary tab-button ${currentTab === 'overview' ? 'active' : 'inactive'}" onclick="switchTab('overview')">
+            📊 總覽
+          </button>
+          <button class="btn btn-secondary tab-button ${currentTab === 'circuits' ? 'active' : 'inactive'}" onclick="switchTab('circuits')">
+            ⚡ 迴路表
+          </button>
+          <button class="btn btn-secondary tab-button ${currentTab === 'alerts' ? 'active' : 'inactive'}" onclick="switchTab('alerts')">
+            🚨 告警
+          </button>
+          <button class="btn btn-secondary tab-button ${currentTab === 'forecast' ? 'active' : 'inactive'}" onclick="switchTab('forecast')">
+            📈 預測
+          </button>
+        </div>
+      `;
+
+      // 根據選中的 Tab 渲染內容
+      if (currentTab === 'overview') {
+        html += renderOverview();
+      } else if (currentTab === 'circuits') {
+        html += renderCircuits();
+      } else if (currentTab === 'alerts') {
+        html += renderAlerts();
+      } else if (currentTab === 'forecast') {
+        html += renderForecast();
+      }
+
+      FM.loadContent(html);
+    }
+
+    function renderOverview() {
+      let html = '';
+
+      // KPI 卡
+      const usageRate = Math.round((powerData.currentLoad / powerData.contractCapacity) * 100);
+      const peakRate = Math.round((powerData.peakForecast / powerData.contractCapacity) * 100);
+
+      html += `
+        <div class="grid grid-cols-3">
+          <div class="kpi ${usageRate > 80 ? 'danger' : usageRate > 60 ? 'warning' : 'success'}">
+            <div>
+              <div class="kpi-label">契約容量使用率</div>
+              <div class="kpi-value">${usageRate}<span class="kpi-unit">%</span></div>
+            </div>
+            <div class="kpi-icon">⚡</div>
+          </div>
+
+          <div class="kpi">
+            <div>
+              <div class="kpi-label">實時總負載</div>
+              <div class="kpi-value">${powerData.currentLoad}<span class="kpi-unit">kW</span></div>
+            </div>
+            <div class="kpi-icon">📊</div>
+          </div>
+
+          <div class="kpi ${peakRate > 85 ? 'danger' : 'warning'}">
+            <div>
+              <div class="kpi-label">尖峰用電預測</div>
+              <div class="kpi-value">${powerData.peakForecast}<span class="kpi-unit">kW</span></div>
+            </div>
+            <div class="kpi-icon">📈</div>
+          </div>
+        </div>
+      `;
+
+      // 契約容量儀表盤
+      html += `
+        <div class="card">
+          <div class="card-header">
+            <h3>⚡ 契約容量使用率</h3>
+          </div>
+          <div class="card-body chart-container">
+            <div class="svg-container">
+              ${FM.gauge(usageRate)}
+            </div>
+          </div>
+          <div class="chart-meta">
+            使用 ${powerData.currentLoad} kW / 合約 ${powerData.contractCapacity} kW
+          </div>
+        </div>
+      `;
+
+      // 各區域負載長條圖
+      html += `
+        <div class="card">
+          <div class="card-header">
+            <h3>🏢 各區域實時負載</h3>
+          </div>
+          <div class="card-body">
+            <div class="svg-container">
+              ${FM.svgBar(powerData.areaLoads.map(a => ({ label: a.name.split('(')[0], value: a.load })), {
+                width: 600,
+                height: 280,
+                maxValue: 35,
+                color: 'var(--color-primary-bright)'
+              })}
+            </div>
+            <div class="stat-cards-grid">
+              ${powerData.areaLoads.map(area => {
+                const usage = area.load / area.maxLoad;
+                let gradientClass = 'progress-gradient-success';
+                if (usage > 0.85) gradientClass = 'progress-gradient-danger';
+                else if (usage > 0.7) gradientClass = 'progress-gradient-warning';
+                return `
+                <div class="stat-card">
+                  <div class="stat-card-label">${area.icon} ${area.name}</div>
+                  <div class="stat-card-value">${area.load}<span class="stat-card-unit">kW</span></div>
+                  <div class="progress progress-compact">
+                    <div class="progress-bar ${gradientClass}" style="width: ${usage * 100}%"></div>
+                  </div>
+                </div>
+              `}).join('')}
+            </div>
+          </div>
+        </div>
+      `;
+
+      // 24小時負載趨勢
+      html += `
+        <div class="card">
+          <div class="card-header">
+            <h3>📈 24小時負載趨勢</h3>
+          </div>
+          <div class="card-body">
+            <div class="svg-container">
+              ${FM.svgLine([{
+                label: '負載',
+                data: powerData.loadTrend,
+                color: 'var(--color-primary-bright)'
+              }], { width: 600, height: 250 })}
+            </div>
+            <div class="chart-meta">
+              最低: ${Math.min(...powerData.loadTrend)}kW | 平均: ${Math.round(powerData.loadTrend.reduce((a, b) => a + b) / powerData.loadTrend.length)}kW | 最高: ${Math.max(...powerData.loadTrend)}kW
+            </div>
+          </div>
+        </div>
+      `;
+
+      return html;
+    }
+
+    function renderCircuits() {
+      let html = '';
+
+      // 電表列表
+      const rows = powerData.circuits.map(circuit => [
+        FM.spaceTag(circuit.code),
+        circuit.name,
+        circuit.voltage,
+        `<span class="font-semibold">${circuit.current.toFixed(1)}</span> A`,
+        `<span class="font-semibold text-primary">${circuit.power.toFixed(2)}</span> kW`,
+        FM.statusBadge(circuit.status)
+      ]);
+
+      const alertRows = powerData.circuits
+        .map((c, i) => c.status !== 'ok' ? i : -1)
+        .filter(i => i >= 0);
+
+      html += `
+        <div class="card">
+          <div class="card-header">
+            <h3>⚡ 各迴路電表</h3>
+            <span style="font-size: 12px; color: #666;">${powerData.circuits.length} 迴</span>
+          </div>
+          <div class="card-body">
+            ${FM.createTable(
+              ['空間碼', '迴路名稱', '電壓', '電流', '功率', '狀態'],
+              rows,
+              { alertRows: alertRows }
+            )}
+          </div>
+        </div>
+      `;
+
+      // 狀態分布甜甜圈
+      const statusCounts = {
+        ok: powerData.circuits.filter(c => c.status === 'ok').length,
+        warn: powerData.circuits.filter(c => c.status === 'warn').length,
+        crit: powerData.circuits.filter(c => c.status === 'crit').length
+      };
+
+      html += `
+        <div class="card">
+          <div class="card-header">
+            <h3>📊 迴路狀態分布</h3>
+          </div>
+          <div class="card-body chart-container">
+            <div class="svg-container">
+              ${FM.svgDonut([
+                { label: '正常', value: statusCounts.ok, color: 'var(--color-success)' },
+                { label: '警告', value: statusCounts.warn, color: 'var(--color-warning)' },
+                { label: '緊急', value: statusCounts.crit, color: 'var(--color-danger)' }
+              ])}
+            </div>
+            <div class="donut-stats">
+              <div class="badge-list">
+                <div><span class="badge ok">✓ 正常 ${statusCounts.ok} 迴</span></div>
+                <div><span class="badge warn">⚠ 警告 ${statusCounts.warn} 迴</span></div>
+                <div><span class="badge crit">✕ 緊急 ${statusCounts.crit} 迴</span></div>
+            </div>
+          </div>
+        </div>
+      `;
+
+      return html;
+    }
+
+    function renderAlerts() {
+      let html = '';
+
+      // 按等級分組
+      const critAlerts = powerData.powerAlerts.filter(a => a.level === 'crit');
+      const warnAlerts = powerData.powerAlerts.filter(a => a.level === 'warn');
+      const infoAlerts = powerData.powerAlerts.filter(a => a.level === 'info');
+
+      // 緊急告警
+      if (critAlerts.length > 0) {
+        html += `<h3 class="section-title">🔴 緊急告警 (${critAlerts.length})</h3>`;
+        critAlerts.forEach(alert => {
+          html += `
+            <div class="card alert-card-crit">
+              <div class="card-header">
+                <div class="alert-content">
+                  <div class="alert-header-flex">
+                    <span class="badge crit">緊急</span>
+                    ${FM.spaceTag(alert.code)}
+                    <span class="alert-msg-crit">${alert.msg}</span>
+                  </div>
+                  <div class="alert-meta">
+                    ⏱ ${FM.timeAgo(alert.time)} | 🤖 ${alert.action}
+                  </div>
+                </div>
+                ${alert.confirmed ? `<span class="badge ok">✓ 已確認</span>` : `<button class="btn btn-danger btn-small" onclick="confirmPowerAlert('${alert.id}')">確認</button>`}
+              </div>
+            </div>
+          `;
+        });
+      }
+
+      // 一般告警
+      if (warnAlerts.length > 0) {
+        html += `<h3 class="section-title" style="margin-top: 40px;">🟡 一般告警 (${warnAlerts.length})</h3>`;
+        warnAlerts.forEach(alert => {
+          html += `
+            <div class="card alert-card-warn">
+              <div class="card-header">
+                <div class="alert-content">
+                  <div class="alert-header-flex">
+                    <span class="badge warn">警告</span>
+                    ${FM.spaceTag(alert.code)}
+                    <span class="alert-msg-warn">${alert.msg}</span>
+                  </div>
+                  <div class="alert-meta">
+                    ⏱ ${FM.timeAgo(alert.time)} | 🤖 ${alert.action}
+                  </div>
+                </div>
+              </div>
+            </div>
+          `;
+        });
+      }
+
+      // 資訊事件
+      if (infoAlerts.length > 0) {
+        html += `<h3 class="section-title" style="margin-top: 40px;">ℹ️ 資訊事件 (${infoAlerts.length})</h3>`;
+        infoAlerts.forEach(alert => {
+          html += `
+            <div class="card">
+              <div class="card-header">
+                <div class="alert-content">
+                  <div class="alert-header-flex">
+                    <span class="badge info">資訊</span>
+                    ${FM.spaceTag(alert.code)}
+                    <span>${alert.msg}</span>
+                  </div>
+                  <div class="alert-meta">
+                    ⏱ ${FM.timeAgo(alert.time)}
+                  </div>
+                </div>
+              </div>
+            </div>
+          `;
+        });
+      }
+
+      return html;
+    }
+
+    function renderForecast() {
+      let html = '';
+
+      const contractCap = powerData.contractCapacity;
+      const peakForecast = powerData.peakForecast;
+      const currentLoad = powerData.currentLoad;
+      const margin = contractCap - peakForecast;
+      const marginPct = Math.round((margin / contractCap) * 100);
+
+      html += `
+        <div class="card">
+          <div class="card-header">
+            <h3>📊 尖峰用電預測</h3>
+          </div>
+          <div class="card-body">
+            <div class="grid grid-cols-2">
+              <div class="forecast-info-box">
+                <div class="forecast-label">契約容量</div>
+                <div class="forecast-value primary">${contractCap} <span class="small-unit">kW</span></div>
+              </div>
+              <div class="forecast-info-box">
+                <div class="forecast-label">尖峰預測</div>
+                <div class="forecast-value warning">${peakForecast} <span class="small-unit">kW</span></div>
+              </div>
+            </div>
+
+            <div class="forecast-usage">
+              <div class="forecast-usage-header">
+                <span>預測容量使用</span>
+                <span class="usage-percent-warning">${Math.round((peakForecast / contractCap) * 100)}%</span>
+              </div>
+              <div class="progress">
+                <div class="progress-bar warning" style="width: ${(peakForecast / contractCap) * 100}%"></div>
+              </div>
+            </div>
+
+            <div class="info-grid">
+              <div class="info-box primary">
+                <div class="forecast-label">剩餘容量</div>
+                <div class="forecast-value primary">${margin.toFixed(1)} <span style="font-size: 14px;">kW</span></div>
+                <div class="forecast-label" style="margin-top: 4px;">${marginPct}% 餘量</div>
+              </div>
+              <div class="info-box gray">
+                <div class="forecast-label">當前與預測差</div>
+                <div class="forecast-value" style="color: #333;">${(peakForecast - currentLoad).toFixed(1)} <span style="font-size: 14px;">kW</span></div>
+                <div class="forecast-label" style="margin-top: 4px;">增長預估</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+
+      // 預警建議
+      html += `
+        <div class="card">
+          <div class="card-header">
+            <h3>💡 系統建議</h3>
+          </div>
+          <div class="card-body">
+            <div class="suggestion-box ${marginPct < 20 ? 'warning' : 'success'}">
+              ${marginPct < 20 ? `
+                <div class="suggestion-title warning">⚠️ 容量預警</div>
+                <div class="suggestion-content">
+                  尖峰預測 ${peakForecast}kW 接近上限，剩餘容量僅 ${marginPct}%。建議：
+                  <ul style="margin-top: 8px; margin-left: 20px;">
+                    <li>分散 B3 震波治療室用電時間</li>
+                    <li>檢查是否有不必要的負載運行</li>
+                    <li>考慮增加契約容量至 220kW</li>
+                  </ul>
+                </div>
+              ` : `
+                <div class="suggestion-title success">✓ 容量充足</div>
+                <div class="suggestion-content">
+                  當前預測負載在安全範圍，容量餘裕 ${marginPct}%。持續監測尖峰期波動。
+                </div>
+              `}
+            </div>
+          </div>
+        </div>
+      `;
+
+      return html;
+    }
+
+    // 初始化
+    renderContent();
+  </script>
+</body>
+</html>

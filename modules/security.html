@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>保全排班 — 德新行政管理平台</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <style>
+    .roster { display:grid; grid-template-columns:90px repeat(7,1fr); gap:4px; min-width:680px; }
+    .roster .rc { padding:8px 4px; border-radius:4px; text-align:center; font-size:12px; color:#fff; }
+    .roster .rh { background:#0054A7; color:#fff; font-weight:700; padding:8px 4px; border-radius:4px; text-align:center; font-size:12px; }
+    .roster .rl { display:flex; align-items:center; font-weight:600; font-size:12px; color:#3E3A39; }
+  </style>
+</head>
+<body>
+  <div id="fm-shell"></div>
+  <div id="fm-content"></div>
+  <script src="../assets/app.js"></script>
+  <script>
+    FM.renderShell('security', '保全排班');
+
+    const sec = {
+      onDuty: [
+        { id:'SEC-01', name:'林志明', post:'迎賓大廳崗', code:'7-A1-SEC-01', shift:'早班 07:00-15:00', status:'on', in:'06:52' },
+        { id:'SEC-02', name:'陳建宏', post:'光復北路出入口', code:'7-A4-SEC-02', shift:'早班 07:00-15:00', status:'on', in:'06:58' },
+        { id:'SEC-03', name:'黃淑芬', post:'巡邏機動', code:'7-D1-SEC-03', shift:'早班 07:00-15:00', status:'patrol', in:'07:01' },
+        { id:'SEC-05', name:'吳俊傑', post:'地下停車場', code:'7-A1-SEC-05', shift:'早班 07:00-15:00', status:'late', in:'—' },
+      ],
+      shifts: ['早 07-15','中 15-23','夜 23-07'],
+      // 一週排班 (3 班 × 7 天 → 顯示值班人數)
+      roster: [
+        { name:'早 07-15', color:'#00A94F', days:[2,2,2,2,2,1,1] },
+        { name:'中 15-23', color:'#008CD6', days:[2,2,2,2,2,2,1] },
+        { name:'夜 23-07', color:'#3D5A80', days:[1,1,1,1,1,1,1] },
+      ],
+      posts: [
+        { code:'7-A1-SEC-01', name:'迎賓大廳崗', need:1, have:1 },
+        { code:'7-A4-SEC-02', name:'光復北路出入口', need:1, have:1 },
+        { code:'7-A1-SEC-05', name:'地下停車場', need:1, have:0 },
+        { code:'7-D1-SEC-03', name:'巡邏機動', need:1, have:1 },
+      ],
+      patrol: [
+        { code:'7-A1-SEC-P1', name:'大廳/櫃檯', last:Date.now()-900000, interval:60, status:'ok' },
+        { code:'7-A4-SEC-P2', name:'出入口/逃生門', last:Date.now()-1800000, interval:60, status:'ok' },
+        { code:'7-C1-SEC-P3', name:'訓練區/器材室', last:Date.now()-4200000, interval:60, status:'late' },
+        { code:'7-E1-SEC-P4', name:'更衣/淋浴區', last:Date.now()-2400000, interval:90, status:'ok' },
+        { code:'7-D3-SEC-P5', name:'機房/檔案室', last:Date.now()-600000, interval:120, status:'ok' },
+      ],
+      alerts: [
+        { id:'SEC-A001', level:'warn', code:'7-A1-SEC-05', name:'地下停車場崗未到崗', msg:'吳俊傑早班逾 15 分鐘未打卡，停車場崗目前空缺', time:Date.now()-900000, aiAction:'AI建議：聯繫當事人並調度巡邏機動暫代，推播主管群', confirmed:false },
+        { id:'SEC-A002', level:'warn', code:'7-C1-SEC-P3', name:'訓練區巡邏逾時', msg:'訓練區/器材室已逾 70 分鐘未巡邏打卡（標準 60 分）', time:Date.now()-600000, aiAction:'AI建議：提醒機動保全前往補巡', confirmed:false },
+      ],
+    };
+    FM.alerts = FM.alerts.concat(sec.alerts.map(a=>({id:a.id,level:a.level,space:a.code,time:new Date(a.time),system:'SEC',msg:a.msg,aiAction:a.aiAction,needConfirm:false,confirmed:a.confirmed})));
+
+    let tab='duty';
+    function render(){
+      const gap = sec.posts.filter(p=>p.have<p.need).length;
+      let h = `
+        <div class="grid grid-cols-4 gap-3 mb-4">
+          <div class="kpi success"><div class="kpi-icon">🛡️</div><div class="kpi-value">${sec.onDuty.filter(g=>g.status!=='late').length}</div><div class="kpi-unit">人</div><div class="kpi-label">在勤保全</div></div>
+          <div class="kpi"><div class="kpi-icon">📍</div><div class="kpi-value">${sec.posts.length}</div><div class="kpi-unit">崗</div><div class="kpi-label">勤務崗位</div></div>
+          <div class="kpi ${gap?'danger':'success'}"><div class="kpi-icon">⚠️</div><div class="kpi-value">${gap}</div><div class="kpi-unit">缺</div><div class="kpi-label">人力缺口</div></div>
+          <div class="kpi warning"><div class="kpi-icon">🚶</div><div class="kpi-value">${sec.patrol.filter(p=>p.status==='late').length}</div><div class="kpi-unit">點</div><div class="kpi-label">巡邏逾時</div></div>
+        </div>
+        <div class="card mb-4"><div class="card-header"><div style="display:flex;gap:8px;border-bottom:2px solid #f5f5f5;flex-wrap:wrap;">
+          <button class="tab-btn ${tab==='duty'?'active':''}" onclick="sw('duty')">🛡️ 在勤保全</button>
+          <button class="tab-btn ${tab==='roster'?'active':''}" onclick="sw('roster')">📅 週排班表</button>
+          <button class="tab-btn ${tab==='patrol'?'active':''}" onclick="sw('patrol')">🚶 巡邏打卡</button>
+          <button class="tab-btn ${tab==='alerts'?'active':''}" onclick="sw('alerts')">🚨 告警 (${sec.alerts.filter(a=>!a.confirmed).length})</button>
+        </div></div><div class="card-body">${content()}</div></div>`;
+      FM.loadContent(h);
+    }
+    function content(){
+      if(tab==='duty') return duty();
+      if(tab==='roster') return roster();
+      if(tab==='patrol') return patrol();
+      return alerts();
+    }
+    function duty(){
+      let h='<div class="mb-3"><h3 class="section-title">本班在勤保全</h3></div><div class="grid grid-cols-2 gap-3" style="--responsive-cols:auto;">';
+      sec.onDuty.forEach(g=>{
+        const badge = g.status==='on'?'<span class="badge ok">在崗</span>':g.status==='patrol'?'<span class="badge info">巡邏中</span>':'<span class="badge crit">未到崗</span>';
+        h+=`<div class="card"><div class="card-header"><h3>${g.name} <span class="text-muted text-sm">${g.id}</span></h3>${badge}</div>
+          <div class="card-body"><div style="margin-bottom:6px;">${FM.spaceTag(g.code)} ${g.post}</div>
+          <div class="text-muted text-sm">${g.shift} · 簽到 ${g.in}</div></div></div>`;
+      });
+      return h+'</div>';
+    }
+    function roster(){
+      const days=['一','二','三','四','五','六','日'];
+      let h='<div class="mb-3"><h3 class="section-title">本週保全排班（格內為值班人數）</h3></div><div style="overflow-x:auto;"><div class="roster">';
+      h+='<div class="rh">班別</div>'+days.map(d=>`<div class="rh">${d}</div>`).join('');
+      sec.roster.forEach(r=>{
+        h+=`<div class="rl">${r.name}</div>`;
+        r.days.forEach(n=> h+=`<div class="rc" style="background:${n>=2?r.color:n===1?r.color+'cc':'#ddd'};">${n}</div>`);
+      });
+      h+='</div></div>';
+      h+='<div class="mb-3" style="margin-top:18px;"><h3 class="section-title">崗位人力配置</h3></div><table class="dtable"><thead><tr><th>崗位</th><th>位置</th><th>需求</th><th>到位</th><th>狀態</th></tr></thead><tbody>';
+      sec.posts.forEach(p=>{ const ok=p.have>=p.need;
+        h+=`<tr class="${ok?'':'alert-row'}"><td><strong>${p.name}</strong></td><td>${FM.spaceTag(p.code)}</td><td>${p.need}</td><td>${p.have}</td><td>${ok?'<span class="badge ok">足額</span>':'<span class="badge crit">缺口</span>'}</td></tr>`;});
+      return h+'</tbody></table>';
+    }
+    function patrol(){
+      let h='<div class="mb-3"><h3 class="section-title">巡邏點打卡狀態</h3></div><table class="dtable"><thead><tr><th>巡邏點</th><th>位置</th><th>上次打卡</th><th>週期</th><th>狀態</th></tr></thead><tbody>';
+      sec.patrol.forEach(p=>{ const late=p.status==='late';
+        h+=`<tr class="${late?'alert-row':''}"><td><strong>${p.name}</strong></td><td>${FM.spaceTag(p.code)}</td><td>${FM.timeAgo(p.last)}</td><td>每 ${p.interval} 分</td><td>${late?'<span class="badge warn">逾時</span>':'<span class="badge ok">正常</span>'}</td></tr>`;});
+      return h+'</tbody></table>';
+    }
+    function alerts(){
+      let h='<div class="mb-3"><h3 class="section-title">保全告警</h3></div>';
+      if(!sec.alerts.length) return h+'<div style="text-align:center;padding:32px;color:#999;">暫無告警</div>';
+      h+='<table class="dtable"><thead><tr><th>告警</th><th>位置</th><th>AI 建議</th><th>確認</th></tr></thead><tbody>';
+      sec.alerts.forEach(a=>{
+        h+=`<tr class="${a.level==='crit'?'alert-row':''}"><td><span class="badge ${a.level}">${a.level==='warn'?'注意':'緊急'}</span> <strong>${a.name}</strong><br><span class="text-muted text-sm">${a.msg} · ${FM.timeAgo(a.time)}</span></td>
+          <td>${FM.spaceTag(a.code)}</td><td><div style="background:#f9f9f9;padding:8px;border-radius:4px;" class="text-sm">${a.aiAction}</div></td>
+          <td style="text-align:center;">${a.confirmed?'<span class="badge ok">已確認</span>':`<button class="btn btn-primary btn-small" onclick="cf('${a.id}')">確認</button><br><button class="btn btn-secondary btn-small" style="margin-top:4px;" onclick="push('${a.id}')">推 LINE</button>`}</td></tr>`;});
+      return h+'</tbody></table>';
+    }
+    function sw(t){tab=t;render();}
+    function cf(id){const a=sec.alerts.find(x=>x.id===id);if(a){a.confirmed=true;render();FM.toast('已確認並派工','ok');}}
+    function push(id){const a=sec.alerts.find(x=>x.id===id);if(a){FM.pushLineByAlert({level:a.level,space:a.code,msg:a.name,aiAction:a.aiAction});}}
+    render();
+  </script>
+</body>
+</html>

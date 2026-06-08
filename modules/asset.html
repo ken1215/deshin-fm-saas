@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>資產保固/法定申報 — 德新行政管理平台</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <style>
+    /* 響應式表格處理（超寬螢幕優化） */
+    @media (min-width: 1920px) {
+      .card-body {
+        max-width: 100%;
+        overflow-x: auto;
+      }
+
+      table {
+        min-width: 100%;
+        white-space: nowrap;
+      }
+
+      table th,
+      table td {
+        padding: 10px 8px;
+        font-size: 12px;
+      }
+    }
+
+    /* 標籤頁按鈕統一樣式（避免內聯 style 重複定義） */
+    .tab-btn {
+      border: none;
+      background: none;
+      padding: 12px 16px;
+      cursor: pointer;
+      font-weight: normal;
+      color: #999;
+      transition: all 300ms ease-in-out;
+    }
+
+    .tab-btn.active {
+      border-bottom: 3px solid #0054A7;
+      font-weight: bold;
+      color: #0054A7;
+    }
+
+    .tab-btn:hover {
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+  <div id="fm-sidebar"></div>
+  <div id="fm-topbar"></div>
+  <div id="fm-shell">
+    <div id="fm-content"></div>
+  </div>
+
+  <script src="../assets/app.js"></script>
+  <script>
+    /* ========================================================================
+       資產保固/法定申報模組 (asset.html)
+       功能：資產台帳、保固/巡檢提醒、法定申報行事曆、到期倒數
+       ======================================================================== */
+
+    // 初始化頁面框架
+    FM.renderShell('asset', '資產保固/法定申報');
+
+    // ───────────────────────────────────────────────────────────────────────
+    // 1. Mock 資料：資產保固台帳
+    // ───────────────────────────────────────────────────────────────────────
+    const assetInventory = [
+      {
+        id: 'AST-001',
+        spaceCode: '7-B3-PWR-01',
+        assetName: '220V 專迴電表',
+        category: '電力',
+        purchaseDate: new Date(2022, 0, 15),
+        warrantyEndDate: new Date(2027, 0, 15),
+        inspectionLastDate: new Date(2026, 4, 10),
+        inspectionNextDate: new Date(2026, 7, 10),
+        status: 'ok',
+        notes: '定期三年檢測'
+      },
+      {
+        id: 'AST-002',
+        spaceCode: '7-B3-PWR-02',
+        assetName: '110V UPS 不斷電系統',
+        category: '電力',
+        purchaseDate: new Date(2024, 6, 1),
+        warrantyEndDate: new Date(2027, 6, 1),
+        inspectionLastDate: new Date(2026, 4, 15),
+        inspectionNextDate: new Date(2026, 9, 15),
+        status: 'ok',
+        notes: '年度檢測'
+      },
+      {
+        id: 'AST-003',
+        spaceCode: '7-C1-HVAC-02',
+        assetName: '冰水主機',
+        category: '空調',
+        purchaseDate: new Date(2021, 3, 20),
+        warrantyEndDate: new Date(2026, 3, 20),
+        inspectionLastDate: new Date(2026, 3, 5),
+        inspectionNextDate: new Date(2026, 9, 5),
+        status: 'warn',
+        notes: '保固將於 12 天內到期'
+      },
+      {
+        id: 'AST-004',
+        spaceCode: '7-B1-HVAC-01',
+        assetName: '室內機組 (B1)',
+        category: '空調',
+        purchaseDate: new Date(2023, 8, 10),
+        warrantyEndDate: new Date(2026, 8, 10),
+        inspectionLastDate: new Date(2026, 4, 20),
+        inspectionNextDate: new Date(2026, 10, 20),
+        status: 'ok',
+        notes: '年度檢測'
+      },
+      {
+        id: 'AST-005',
+        spaceCode: '7-E2-WTR-03',
+        assetName: '污水泵浦',
+        category: '給排水',
+        purchaseDate: new Date(2022, 5, 8),
+        warrantyEndDate: new Date(2026, 5, 8),
+        inspectionLastDate: new Date(2026, 3, 15),
+        inspectionNextDate: new Date(2026, 9, 15),
+        status: 'crit',
+        notes: '保固已於 2 天前到期，巡檢超期 60+ 天'
+      },
+      {
+        id: 'AST-006',
+        spaceCode: '7-A2-FIRE-01',
+        assetName: '火災警報主機',
+        category: '消防',
+        purchaseDate: new Date(2020, 11, 1),
+        warrantyEndDate: new Date(2025, 11, 1),
+        inspectionLastDate: new Date(2025, 11, 15),
+        inspectionNextDate: new Date(2026, 6, 15),
+        status: 'crit',
+        notes: '法定每年檢測，保固已過期 6 月'
+      },
+      {
+        id: 'AST-007',
+        spaceCode: '7-D1-ACC-01',
+        assetName: '門禁主機系統',
+        category: '門禁安防',
+        purchaseDate: new Date(2023, 2, 5),
+        warrantyEndDate: new Date(2028, 2, 5),
+        inspectionLastDate: new Date(2026, 4, 10),
+        inspectionNextDate: new Date(2027, 4, 10),
+        status: 'ok',
+        notes: '5 年保固'
+      },
+      {
+        id: 'AST-008',
+        spaceCode: '7-E2-WTR-01',
+        assetName: '飲用水設備',
+        category: '給排水',
+        purchaseDate: new Date(2023, 0, 10),
+        warrantyEndDate: new Date(2026, 0, 10),
+        inspectionLastDate: new Date(2026, 1, 20),
+        inspectionNextDate: new Date(2026, 7, 20),
+        status: 'ok',
+        notes: '3 年保固，水質檢測每半年'
+      }
+    ];
+
+    // ───────────────────────────────────────────────────────────────────────
+    // 2. Mock 資料：法定申報事項與罰則
+    // ───────────────────────────────────────────────────────────────────────
+    const legalCompliance = [
+      {
+        id: 'LEG-001',
+        category: '公安申報',
+        item: '消防安全檢查申報',
+        frequency: '每年',
+        lastCompletionDate: new Date(2025, 10, 25),
+        nextDueDate: new Date(2026, 10, 25),
+        advance60daysAlert: new Date(2026, 8, 26),
+        advance30daysAlert: new Date(2026, 9, 26),
+        advance7daysAlert: new Date(2026, 10, 18),
+        penalty: '5,000-25,000 元/次',
+        responsible: '工務課',
+        status: 'ok'
+      },
+      {
+        id: 'LEG-002',
+        category: '消防檢修',
+        item: '滅火設備檢測',
+        frequency: '每 6 月',
+        lastCompletionDate: new Date(2026, 3, 10),
+        nextDueDate: new Date(2026, 9, 10),
+        advance60daysAlert: new Date(2026, 7, 11),
+        advance30daysAlert: new Date(2026, 8, 11),
+        advance7daysAlert: new Date(2026, 9, 3),
+        penalty: '3,000-15,000 元/次',
+        responsible: '安全管理員',
+        status: 'warn'
+      },
+      {
+        id: 'LEG-003',
+        category: '電氣檢查',
+        item: '高壓電氣設備年檢',
+        frequency: '每年',
+        lastCompletionDate: new Date(2025, 8, 15),
+        nextDueDate: new Date(2026, 8, 15),
+        advance60daysAlert: new Date(2026, 6, 16),
+        advance30daysAlert: new Date(2026, 7, 16),
+        advance7daysAlert: new Date(2026, 8, 8),
+        penalty: '2,000-10,000 元/次',
+        responsible: '工務課',
+        status: 'info'
+      },
+      // LEG-004：電梯（已於 2026 年整體取消，為租賃建物公共設施屬房東/業主範圍）
+      {
+        id: 'LEG-005',
+        category: '飲用水',
+        item: '飲用水水質檢測申報',
+        frequency: '每季',
+        lastCompletionDate: new Date(2026, 2, 25),
+        nextDueDate: new Date(2026, 5, 25),
+        advance60daysAlert: new Date(2026, 3, 26),
+        advance30daysAlert: new Date(2026, 4, 26),
+        advance7daysAlert: new Date(2026, 5, 18),
+        penalty: '500-5,000 元/次',
+        responsible: '環境衛生課',
+        status: 'ok'
+      },
+      {
+        id: 'LEG-006',
+        category: '消防檢修',
+        item: '逃生門、安全門檢查',
+        frequency: '每月',
+        lastCompletionDate: new Date(2026, 4, 30),
+        nextDueDate: new Date(2026, 5, 30),
+        advance60daysAlert: new Date(2026, 3, 31),
+        advance30daysAlert: new Date(2026, 4, 31),
+        advance7daysAlert: new Date(2026, 5, 23),
+        penalty: '1,000-5,000 元/次',
+        responsible: '安全管理員',
+        status: 'crit'
+      }
+    ];
+
+    // ───────────────────────────────────────────────────────────────────────
+    // 3. 計算資產狀態與倒數
+    // ───────────────────────────────────────────────────────────────────────
+    function getDaysUntil(targetDate) {
+      const now = new Date();
+      const diff = targetDate - now;
+      const days = Math.ceil(diff / (1000 * 60 * 60 * 24));
+      return days;
+    }
+
+    function getStatusLevel(daysLeft) {
+      if (daysLeft < 0) return 'crit'; // 逾期
+      if (daysLeft <= 7) return 'crit';
+      if (daysLeft <= 30) return 'warn';
+      if (daysLeft <= 60) return 'info';
+      return 'ok';
+    }
+
+    // ───────────────────────────────────────────────────────────────────────
+    // 4. 標籤頁管理
+    // ───────────────────────────────────────────────────────────────────────
+    let currentTab = 'inventory';
+
+    function switchTab(tab) {
+      currentTab = tab;
+      renderContent();
+    }
+
+    // ───────────────────────────────────────────────────────────────────────
+    // 5. 資產台帳表格
+    // ───────────────────────────────────────────────────────────────────────
+    function renderAssetInventory() {
+      let html = '';
+
+      // KPI 統計
+      const totalAssets = assetInventory.length;
+      const warningAssets = assetInventory.filter(a => {
+        const wdays = getDaysUntil(a.warrantyEndDate);
+        const idays = getDaysUntil(a.inspectionNextDate);
+        return getStatusLevel(wdays) !== 'ok' || getStatusLevel(idays) !== 'ok';
+      }).length;
+
+      html += `
+        <div class="grid grid-cols-3 gap-3 mb-4">
+          <div class="kpi success">
+            <div>
+              <div class="kpi-label">資產總數</div>
+              <div class="kpi-value">${totalAssets}</div>
+            </div>
+            <span class="kpi-icon" style="font-size: 32px;">📦</span>
+          </div>
+          <div class="kpi warning">
+            <div>
+              <div class="kpi-label">保固/巡檢異常</div>
+              <div class="kpi-value">${warningAssets}</div>
+            </div>
+            <span class="kpi-icon" style="font-size: 32px;">⚠️</span>
+          </div>
+          <div class="kpi success">
+            <div>
+              <div class="kpi-label">正常資產</div>
+              <div class="kpi-value">${totalAssets - warningAssets}</div>
+            </div>
+            <span class="kpi-icon" style="font-size: 32px;">✓</span>
+          </div>
+        </div>
+      `;
+
+      // 資產台帳表
+      html += '<div class="card">';
+      html += '<div class="card-header"><h3>資產台帳</h3></div>';
+      html += '<div class="card-body">';
+
+      const columns = ['空間碼', '資產名稱', '分類', '購置日期', '保固到期', '保固倒數', '下次巡檢', '巡檢倒數', '狀態'];
+      const rows = [];
+      const alertRows = [];
+
+      assetInventory.forEach((asset, idx) => {
+        const wdays = getDaysUntil(asset.warrantyEndDate);
+        const idays = getDaysUntil(asset.inspectionNextDate);
+        const wstatus = getStatusLevel(wdays);
+        const istatus = getStatusLevel(idays);
+        const overallStatus = (wstatus === 'crit' || istatus === 'crit') ? 'crit' :
+                              (wstatus === 'warn' || istatus === 'warn') ? 'warn' :
+                              (wstatus === 'info' || istatus === 'info') ? 'info' : 'ok';
+
+        // 標記需警示的列（保固或巡檢狀態非 ok）
+        if (overallStatus !== 'ok') {
+          alertRows.push(idx);
+        }
+
+        const wdaysStr = wdays < 0 ? `<span class="text-danger">逾期 ${Math.abs(wdays)} 天</span>` : `${wdays} 天`;
+        const idaysStr = idays < 0 ? `<span class="text-danger">逾期 ${Math.abs(idays)} 天</span>` : `${idays} 天`;
+        const statusBadge = FM.statusBadge(overallStatus === 'ok' ? 'ok' : overallStatus === 'warn' ? 'warn' : 'crit');
+
+        rows.push([
+          asset.spaceCode,
+          asset.assetName,
+          asset.category,
+          asset.purchaseDate.toLocaleDateString('zh-TW'),
+          asset.warrantyEndDate.toLocaleDateString('zh-TW'),
+          wdaysStr,
+          asset.inspectionNextDate.toLocaleDateString('zh-TW'),
+          idaysStr,
+          statusBadge
+        ]);
+      });
+
+      html += FM.createTable(columns, rows, { alertRows });
+      html += '</div></div>';
+
+      return html;
+    }
+
+    // ───────────────────────────────────────────────────────────────────────
+    // 6. 保固/巡檢提醒
+    // ───────────────────────────────────────────────────────────────────────
+    function renderWarrantyReminders() {
+      let html = '';
+
+      const warningItems = assetInventory.filter(a => {
+        const wdays = getDaysUntil(a.warrantyEndDate);
+        return wdays <= 60 && wdays > -1;
+      }).sort((a, b) => getDaysUntil(a.warrantyEndDate) - getDaysUntil(b.warrantyEndDate));
+
+      const inspectionItems = assetInventory.filter(a => {
+        const idays = getDaysUntil(a.inspectionNextDate);
+        return idays <= 60 && idays > -1;
+      }).sort((a, b) => getDaysUntil(a.inspectionNextDate) - getDaysUntil(b.inspectionNextDate));
+
+      // 保固到期提醒
+      html += '<div class="card">';
+      html += '<div class="card-header"><h3>保固到期提醒 (60 天內)</h3></div>';
+      html += '<div class="card-body">';
+
+      if (warningItems.length === 0) {
+        html += '<p class="text-center text-muted" style="padding: 20px;">未來 60 天無保固到期項目</p>';
+      } else {
+        warningItems.forEach(asset => {
+          const daysLeft = getDaysUntil(asset.warrantyEndDate);
+          const level = getStatusLevel(daysLeft);
+          const statusBadge = FM.statusBadge(level);
+
+          html += `
+            <div style="padding: 12px; border-left: 4px solid ${level === 'crit' ? '#C0392B' : level === 'warn' ? '#D35400' : '#1A7A4A'}; margin-bottom: 12px; background: #f9f9f9; border-radius: 4px;">
+              <div style="display: flex; justify-content: space-between; align-items: start;">
+                <div>
+                  <p style="font-weight: 600; margin-bottom: 4px;">${asset.assetName} (${asset.spaceCode})</p>
+                  <p style="font-size: 12px; color: #666;">保固到期日：${asset.warrantyEndDate.toLocaleDateString('zh-TW')} | 倒數：<strong>${daysLeft} 天</strong></p>
+                  <p style="font-size: 12px; color: #666;">${asset.notes}</p>
+                </div>
+                <div style="text-align: right;">
+                  ${statusBadge}
+                </div>
+              </div>
+            </div>
+          `;
+        });
+      }
+
+      html += '</div></div>';
+
+      // 巡檢到期提醒
+      html += '<div class="card">';
+      html += '<div class="card-header"><h3>巡檢到期提醒 (60 天內)</h3></div>';
+      html += '<div class="card-body">';
+
+      if (inspectionItems.length === 0) {
+        html += '<p class="text-center text-muted" style="padding: 20px;">未來 60 天無巡檢到期項目</p>';
+      } else {
+        inspectionItems.forEach(asset => {
+          const daysLeft = getDaysUntil(asset.inspectionNextDate);
+          const level = getStatusLevel(daysLeft);
+          const statusBadge = FM.statusBadge(level);
+
+          html += `
+            <div style="padding: 12px; border-left: 4px solid ${level === 'crit' ? '#C0392B' : level === 'warn' ? '#D35400' : '#1A7A4A'}; margin-bottom: 12px; background: #f9f9f9; border-radius: 4px;">
+              <div style="display: flex; justify-content: space-between; align-items: start;">
+                <div>
+                  <p style="font-weight: 600; margin-bottom: 4px;">${asset.assetName} (${asset.spaceCode})</p>
+                  <p style="font-size: 12px; color: #666;">下次巡檢日：${asset.inspectionNextDate.toLocaleDateString('zh-TW')} | 倒數：<strong>${daysLeft} 天</strong></p>
+                  <p style="font-size: 12px; color: #666;">最後巡檢：${asset.inspectionLastDate.toLocaleDateString('zh-TW')}</p>
+                </div>
+                <div style="text-align: right;">
+                  ${statusBadge}
+                </div>
+              </div>
+            </div>
+          `;
+        });
+      }
+
+      html += '</div></div>';
+
+      return html;
+    }
+
+    // ───────────────────────────────────────────────────────────────────────
+    // 7. 法定申報行事曆
+    // ───────────────────────────────────────────────────────────────────────
+    function renderLegalCompliance() {
+      let html = '';
+
+      // KPI：近期申報
+      const now = new Date();
+      const upcomingCount = legalCompliance.filter(item => {
+        const daysLeft = getDaysUntil(item.nextDueDate);
+        return daysLeft >= 0 && daysLeft <= 60;
+      }).length;
+
+      const overdueCount = legalCompliance.filter(item => {
+        const daysLeft = getDaysUntil(item.nextDueDate);
+        return daysLeft < 0;
+      }).length;
+
+      html += `
+        <div class="grid grid-cols-3 gap-3 mb-4">
+          <div class="kpi success">
+            <div>
+              <div class="kpi-label">法定申報項目</div>
+              <div class="kpi-value">${legalCompliance.length}</div>
+            </div>
+            <span class="kpi-icon" style="font-size: 32px;">📋</span>
+          </div>
+          <div class="kpi warning">
+            <div>
+              <div class="kpi-label">60 天內待申報</div>
+              <div class="kpi-value">${upcomingCount}</div>
+            </div>
+            <span class="kpi-icon" style="font-size: 32px;">⏱️</span>
+          </div>
+          <div class="kpi danger" style="border-left-color: #C0392B;">
+            <div>
+              <div class="kpi-label">逾期未申報</div>
+              <div class="kpi-value">${overdueCount}</div>
+            </div>
+            <span class="kpi-icon" style="font-size: 32px;">🚨</span>
+          </div>
+        </div>
+      `;
+
+      // 法定申報表
+      html += '<div class="card">';
+      html += '<div class="card-header"><h3>法定申報行事曆</h3></div>';
+      html += '<div class="card-body">';
+
+      const columns = ['申報項目', '分類', '頻次', '下次期限', '倒數', '提醒狀態', '罰則', '責任單位'];
+      const rows = [];
+
+      legalCompliance.sort((a, b) => getDaysUntil(a.nextDueDate) - getDaysUntil(b.nextDueDate)).forEach(item => {
+        const daysLeft = getDaysUntil(item.nextDueDate);
+        const level = getStatusLevel(daysLeft);
+        const statusBadge = FM.statusBadge(level === 'ok' ? 'ok' : level === 'warn' ? 'warn' : 'crit');
+
+        let remindStr = '';
+        if (daysLeft < 0) {
+          remindStr = `<span class="badge crit">逾期 ${Math.abs(daysLeft)} 天</span>`;
+        } else if (daysLeft <= 7) {
+          remindStr = `<span class="badge crit">${daysLeft} 天內</span>`;
+        } else if (daysLeft <= 30) {
+          remindStr = `<span class="badge warn">${daysLeft} 天內</span>`;
+        } else {
+          remindStr = `<span class="badge info">${daysLeft} 天內</span>`;
+        }
+
+        rows.push([
+          item.item,
+          item.category,
+          item.frequency,
+          item.nextDueDate.toLocaleDateString('zh-TW'),
+          daysLeft < 0 ? `<span class="text-danger">逾期 ${Math.abs(daysLeft)} 天</span>` : `${daysLeft} 天`,
+          remindStr,
+          item.penalty,
+          item.responsible
+        ]);
+      });
+
+      html += FM.createTable(columns, rows, { alertRows: [] });
+      html += '</div></div>';
+
+      return html;
+    }
+
+    // ───────────────────────────────────────────────────────────────────────
+    // 8. 主渲染函式
+    // ───────────────────────────────────────────────────────────────────────
+    function renderContent() {
+      let html = '';
+
+      // 標籤頁切換
+      html += `
+        <div style="display: flex; gap: 8px; margin-bottom: 24px; border-bottom: 2px solid #e0e0e0; padding-bottom: 0;">
+          <button class="tab-btn ${currentTab === 'inventory' ? 'active' : ''}"
+                  onclick="switchTab('inventory')">
+            📦 資產台帳
+          </button>
+          <button class="tab-btn ${currentTab === 'reminders' ? 'active' : ''}"
+                  onclick="switchTab('reminders')">
+            ⏱️ 保固/巡檢提醒
+          </button>
+          <button class="tab-btn ${currentTab === 'compliance' ? 'active' : ''}"
+                  onclick="switchTab('compliance')">
+            📋 法定申報行事曆
+          </button>
+        </div>
+      `;
+
+      // 條件渲染
+      if (currentTab === 'inventory') {
+        html += renderAssetInventory();
+      } else if (currentTab === 'reminders') {
+        html += renderWarrantyReminders();
+      } else if (currentTab === 'compliance') {
+        html += renderLegalCompliance();
+      }
+
+      FM.loadContent(html);
+    }
+
+    // 初始渲染
+    renderContent();
+  </script>
+</body>
+</html>

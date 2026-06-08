@@ -1,0 +1,997 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>空調節能 — 德新行政管理平台</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+  <div id="fm-shell"></div>
+  <div id="fm-content"></div>
+
+  <script src="../assets/app.js"></script>
+  <script>
+    // ========================================================================
+    // HVAC 空調節能模組
+    // ========================================================================
+
+    FM.renderShell('hvac', '空調 HVAC');
+
+    // ────────────────────────────────────────────────────────────────────
+    // 1. Mock 資料定義 — VRV 區域、冰水主機、風量、偵測
+    // ────────────────────────────────────────────────────────────────────
+
+    const hvacData = {
+      // VRV 區域溫濕度點位（各區室內機）
+      vrvAreas: [
+        {
+          code: '7-A1-HVAC-01',
+          area: 'A',
+          room: '1',
+          name: '掛號大廳',
+          currentTemp: 23.8,
+          setTemp: 24.0,
+          currentHumidity: 52,
+          setHumidity: 55,
+          status: 'ok',
+          power: 8.2, // kW
+          efficiency: 94
+        },
+        {
+          code: '7-A2-HVAC-01',
+          area: 'A',
+          room: '2',
+          name: '醫師診間',
+          currentTemp: 22.5,
+          setTemp: 22.0,
+          currentHumidity: 48,
+          setHumidity: 50,
+          status: 'warn', // 過冷
+          power: 3.1,
+          efficiency: 88
+        },
+        {
+          code: '7-B1-HVAC-02',
+          area: 'B',
+          room: '1',
+          name: '震波治療室',
+          currentTemp: 25.2,
+          setTemp: 24.5,
+          currentHumidity: 58,
+          setHumidity: 55,
+          status: 'warn', // 過熱
+          power: 12.5,
+          efficiency: 82
+        },
+        {
+          code: '7-B3-HVAC-02',
+          area: 'B',
+          room: '3',
+          name: '牽引治療室',
+          currentTemp: 23.9,
+          setTemp: 24.0,
+          currentHumidity: 54,
+          setHumidity: 55,
+          status: 'ok',
+          power: 6.8,
+          efficiency: 96
+        },
+        {
+          code: '7-C1-HVAC-02',
+          area: 'C',
+          room: '1',
+          name: '有氧訓練區',
+          currentTemp: 26.1,
+          setTemp: 24.5,
+          currentHumidity: 62,
+          setHumidity: 55,
+          status: 'crit', // 嚴重過熱
+          power: 18.3,
+          efficiency: 75
+        },
+        {
+          code: '7-D1-HVAC-01',
+          area: 'D',
+          room: '1',
+          name: '辦公室',
+          currentTemp: 23.1,
+          setTemp: 23.5,
+          currentHumidity: 50,
+          setHumidity: 50,
+          status: 'ok',
+          power: 2.4,
+          efficiency: 98
+        }
+      ],
+
+      // 冰水主機（chiller）狀態
+      chillers: [
+        {
+          id: '冰水主機-01',
+          code: '7-E1-HVAC-01',
+          name: '冰水迴路 A',
+          inletTemp: 7.2,
+          outletTemp: 12.5,
+          flowRate: 85, // % 容量
+          status: 'ok',
+          power: 42.3,
+          runHours: 18234
+        },
+        {
+          id: '冰水主機-02',
+          code: '7-E1-HVAC-02',
+          name: '冰水迴路 B',
+          inletTemp: 7.8,
+          outletTemp: 13.1,
+          flowRate: 62, // % 容量
+          status: 'ok',
+          power: 28.7,
+          runHours: 17856
+        }
+      ],
+
+      // 各區風量（供應/回風）
+      airflows: [
+        { areaCode: '7-A1-HVAC-01', areaName: '掛號大廳', supplyAir: 480, returnAir: 460, target: 500 },
+        { areaCode: '7-A2-HVAC-01', areaName: '醫師診間', supplyAir: 180, returnAir: 175, target: 200 },
+        { areaCode: '7-B1-HVAC-02', areaName: '震波治療室', supplyAir: 560, returnAir: 540, target: 550 },
+        { areaCode: '7-B3-HVAC-02', areaName: '牽引治療室', supplyAir: 320, returnAir: 310, target: 330 },
+        { areaCode: '7-C1-HVAC-02', areaName: '有氧訓練區', supplyAir: 680, returnAir: 660, target: 700 },
+        { areaCode: '7-D1-HVAC-01', areaName: '辦公室', supplyAir: 140, returnAir: 135, target: 150 }
+      ],
+
+      // 異常偵測（空轉、過冷、過熱）
+      anomalies: [
+        {
+          code: '7-A2-HVAC-01',
+          name: '醫師診間',
+          type: 'overcool',
+          severity: 'warn',
+          temp: 22.5,
+          setTemp: 22.0,
+          msg: '空調過冷 0.5°C，建議提高設定溫度',
+          recommendation: '提升設定點至 23°C',
+          energyWaste: 8 // % 浪費
+        },
+        {
+          code: '7-B1-HVAC-02',
+          name: '震波治療室',
+          type: 'overheat',
+          severity: 'warn',
+          temp: 25.2,
+          setTemp: 24.5,
+          msg: '空調過熱 0.7°C，人流繁忙期間',
+          recommendation: '臨時提升冷量或增加風量',
+          energyWaste: 5
+        },
+        {
+          code: '7-C1-HVAC-02',
+          name: '有氧訓練區',
+          type: 'overheat',
+          severity: 'crit',
+          temp: 26.1,
+          setTemp: 24.5,
+          msg: '嚴重過熱 1.6°C，高運動量區域',
+          recommendation: '立即增加冷量，檢查冰水流量',
+          energyWaste: 15
+        },
+        {
+          code: '7-D1-HVAC-01',
+          name: '辦公室',
+          type: 'idle',
+          severity: 'info',
+          temp: 23.1,
+          setTemp: 23.5,
+          msg: '無人佔用，空調未自動關閉',
+          recommendation: '根據排程自動降速至 30% 容量',
+          energyWaste: 12
+        }
+      ],
+
+      // 節能率目標與實際
+      energySavings: {
+        currentSaving: 18.3, // %
+        targetMin: 10,
+        targetMax: 25,
+        monthlyConsumption: 2847, // kWh
+        lastMonthConsumption: 3485,
+        savingsAmount: 638, // kWh
+        costSavings: 3190 // TWD
+      },
+
+      // 溫度趨勢（過去 24 小時）
+      tempTrend: {
+        timestamps: ['0:00', '4:00', '8:00', '12:00', '16:00', '20:00', '24:00'],
+        areas: [
+          {
+            name: '有氧訓練區',
+            values: [22.1, 21.8, 23.4, 26.2, 25.8, 24.5, 23.9]
+          },
+          {
+            name: '震波治療室',
+            values: [23.5, 23.2, 24.1, 25.5, 25.2, 24.8, 24.1]
+          },
+          {
+            name: '掛號大廳',
+            values: [23.8, 23.5, 24.2, 24.1, 23.9, 23.8, 23.8]
+          }
+        ]
+      },
+
+      // 自動啟停建議
+      autoSchedule: [
+        {
+          period: '06:00-07:30',
+          action: '預冷啟動',
+          reason: '上班前 1.5 小時預冷，確保診療時室溫穩定',
+          estimatedSaving: 12 // %
+        },
+        {
+          period: '12:00-14:00',
+          action: '人流高峰增冷',
+          reason: '午間患者量高峰，實施冷負荷管理',
+          estimatedSaving: -8 // 負數表示需增加負荷
+        },
+        {
+          period: '19:00-22:00',
+          action: '夜間降速',
+          reason: '下班後逐步降低空調容量至 40%',
+          estimatedSaving: 18 // %
+        },
+        {
+          period: '22:00-06:00',
+          action: '待機模式',
+          reason: '夜間只保持人工控制，主動回收',
+          estimatedSaving: 22 // %
+        }
+      ],
+
+      // 除濕機（吊隱式·接空調冷凝排水，無集水箱）
+      dehumidifiers: [
+        { code: '7-B4-HVAC-03', area: 'B', name: '物理治療·冷療室', currentRH: 58, targetRH: 55, mode: 'auto', drain: 'ok', capacity: 24 },
+        { code: '7-E3-HVAC-03', area: 'E', name: '輔助·淋浴更衣', currentRH: 67, targetRH: 60, mode: 'cont', drain: 'warn', capacity: 50 },
+        { code: '7-D3-HVAC-03', area: 'D', name: '後勤·檔案室', currentRH: 52, targetRH: 50, mode: 'auto', drain: 'ok', capacity: 18 }
+      ]
+    };
+    // 週期性保養資料已移至 app.js 共用層 FM.hvacMaintenance（逾期會自動推進中控/派工/LINE）
+
+    // ────────────────────────────────────────────────────────────────────
+    // 1b. 控制狀態（可即時操作、跨重繪保留）
+    // ────────────────────────────────────────────────────────────────────
+
+    const AC_MODES = [['cool', '❄️制冷'], ['dry', '💧除濕'], ['fan', '🌀送風'], ['auto', '🔄自動']];
+    const AC_FANS = [['low', '弱'], ['mid', '中'], ['high', '強'], ['auto', '自動']];
+    const DH_MODES = [['cont', '連續'], ['auto', '自動'], ['intv', '間歇']];
+
+    const controlState = {
+      ac: hvacData.vrvAreas.map(z => ({
+        code: z.code, name: z.name, power: true,
+        mode: z.status === 'crit' ? 'cool' : 'auto',
+        setTemp: z.setTemp, fan: z.status === 'crit' ? 'high' : 'auto'
+      })),
+      dh: hvacData.dehumidifiers.map(d => ({
+        code: d.code, name: d.name, power: true,
+        targetRH: d.targetRH, currentRH: d.currentRH, mode: d.mode, drain: d.drain, capacity: d.capacity
+      }))
+    };
+
+    // ────────────────────────────────────────────────────────────────────
+    // 2. Tab 互動狀態
+    // ────────────────────────────────────────────────────────────────────
+
+    let activeTab = 'overview';
+
+    function switchTab(tabName, element) {
+      activeTab = tabName;
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('active');
+      });
+      if (element) element.classList.add('active');
+      renderContent();
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // 3. UI 渲染函數
+    // ────────────────────────────────────────────────────────────────────
+
+    function renderContent() {
+      let html = '';
+
+      // Tab 按鈕
+      html += `
+        <div class="tab-container">
+          <button class="tab-btn ${activeTab === 'overview' ? 'active' : ''}" onclick="switchTab('overview', this)">
+            概覽
+          </button>
+          <button class="tab-btn ${activeTab === 'zones' ? 'active' : ''}" onclick="switchTab('zones', this)">
+            各區溫濕度
+          </button>
+          <button class="tab-btn ${activeTab === 'control' ? 'active' : ''}" onclick="switchTab('control', this)">
+            設備控制
+          </button>
+          <button class="tab-btn ${activeTab === 'maintenance' ? 'active' : ''}" onclick="switchTab('maintenance', this)">
+            保養紀錄
+          </button>
+          <button class="tab-btn ${activeTab === 'anomalies' ? 'active' : ''}" onclick="switchTab('anomalies', this)">
+            異常警告
+          </button>
+          <button class="tab-btn ${activeTab === 'schedule' ? 'active' : ''}" onclick="switchTab('schedule', this)">
+            自動排程建議
+          </button>
+        </div>
+      `;
+
+      // 根據 activeTab 切換內容
+      if (activeTab === 'overview') {
+        html += renderOverview();
+      } else if (activeTab === 'zones') {
+        html += renderZones();
+      } else if (activeTab === 'control') {
+        html += renderControl();
+      } else if (activeTab === 'maintenance') {
+        html += renderMaintenance();
+      } else if (activeTab === 'anomalies') {
+        html += renderAnomalies();
+      } else if (activeTab === 'schedule') {
+        html += renderSchedule();
+      }
+
+      FM.loadContent(html);
+
+      // 重新設置 Tab 按鈕樣式
+      setTimeout(() => {
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+          if (btn.classList.contains('active')) {
+            btn.style.color = '#0054A7';
+            btn.style.borderBottomColor = '#0054A7';
+          }
+        });
+      }, 0);
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // 3.1 概覽頁面
+    // ────────────────────────────────────────────────────────────────────
+
+    function renderOverview() {
+      const { energySavings, tempTrend, chillers, airflows } = hvacData;
+      const stats = FM.getAlertStats();
+      const hvacAlerts = FM.getAlertsForSystem('HVAC');
+
+      let html = `
+        <div class="grid grid-cols-2 gap-3" style="margin-bottom: 24px;">
+          <!-- 節能率 Gauge -->
+          <div class="card">
+            <div class="card-header">
+              <h3 class="text-md font-semibold">本月節能率</h3>
+            </div>
+            <div class="card-body" style="text-align: center; padding: 24px;">
+              ${FM.gauge(energySavings.currentSaving)}
+              <div style="margin-top: 12px; font-size: 12px; color: #666;">
+                目標: ${energySavings.targetMin}%-${energySavings.targetMax}% | 實現: <span style="color: #00A94F; font-weight: bold;">${energySavings.currentSaving}%</span>
+              </div>
+              <div style="margin-top: 8px; padding: 8px; background: #f5f5f5; border-radius: 4px; font-size: 12px;">
+                省電 <span style="font-weight: bold;">${FM.fmtNum(energySavings.savingsAmount)}</span> kWh | 省費 <span style="font-weight: bold;">$${FM.fmtNum(energySavings.costSavings)}</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 冰水主機狀態 -->
+          <div class="card">
+            <div class="card-header">
+              <h3 class="text-md font-semibold">冰水主機</h3>
+            </div>
+            <div class="card-body">
+              ${chillers.map(ch => `
+                <div style="margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid #e0e0e0;">
+                  <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+                    <span class="font-semibold text-sm">${ch.name}</span>
+                    <span class="badge ${ch.status === 'ok' ? 'ok' : 'warn'}" style="font-size: 11px;">
+                      ${ch.status === 'ok' ? '正常' : '警告'}
+                    </span>
+                  </div>
+                  <div style="font-size: 12px; color: #666; line-height: 1.6;">
+                    進水: ${ch.inletTemp}°C | 出水: ${ch.outletTemp}°C | 流量: ${ch.flowRate}% | 功率: ${ch.power} kW
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        </div>
+
+        <!-- 溫度趨勢圖 -->
+        <div class="card" style="margin-bottom: 24px;">
+          <div class="card-header">
+            <h3 class="text-md font-semibold">過去 24 小時溫度趨勢（關鍵區域）</h3>
+          </div>
+          <div class="card-body" style="padding: 20px;">
+            <div style="background: #f9f9f9; padding: 16px; border-radius: 8px; overflow-x: auto;">
+              ${FM.svgLine(tempTrend.areas.map(area => ({
+                name: area.name,
+                data: area.values
+              })))}
+            </div>
+            <div style="display: flex; gap: 16px; margin-top: 12px; font-size: 12px;">
+              ${tempTrend.areas.map((area, idx) => `
+                <div style="display: flex; align-items: center; gap: 6px;">
+                  <div style="width: 8px; height: 8px; background: ${['#FF6B35', '#004E89', '#1B998B'][idx]}; border-radius: 2px;"></div>
+                  <span>${area.name}</span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        </div>
+
+        <!-- 風量管理 -->
+        <div class="card" style="margin-bottom: 24px;">
+          <div class="card-header">
+            <h3 class="text-md font-semibold">各區風量檢查</h3>
+          </div>
+          <div class="card-body">
+            <table class="dtable">
+              <thead>
+                <tr>
+                  <th>區域</th>
+                  <th>供應風量</th>
+                  <th>回風量</th>
+                  <th>目標</th>
+                  <th>狀態</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${airflows.map(af => {
+                  const devSupply = af.supplyAir - af.target;
+                  const status = Math.abs(devSupply) <= 20 ? 'ok' : devSupply < 0 ? 'warn' : 'warn';
+                  return `
+                    <tr>
+                      <td>${FM.spaceTag(af.areaCode.split('-').slice(0, 2).join('-') + '-HVAC-01')}</td>
+                      <td>${af.supplyAir} m³/h</td>
+                      <td>${af.returnAir} m³/h</td>
+                      <td>${af.target} m³/h</td>
+                      <td><span class="badge ${status}">${status === 'ok' ? '正常' : '偏低'}</span></td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- HVAC 告警摘要 -->
+        <div class="card">
+          <div class="card-header">
+            <h3 class="text-md font-semibold">告警摘要</h3>
+          </div>
+          <div class="card-body">
+            ${hvacAlerts.length > 0 ? `
+              <div style="display: flex; flex-direction: column; gap: 8px;">
+                ${hvacAlerts.slice(0, 3).map(alert => `
+                  <div style="padding: 8px; background: ${alert.level === 'crit' ? '#ffebee' : '#fff3e0'}; border-left: 3px solid ${alert.level === 'crit' ? '#C0392B' : '#D35400'}; border-radius: 4px;">
+                    <div style="font-weight: 500; font-size: 12px; color: #222;">${alert.msg}</div>
+                    <div style="font-size: 11px; color: #666; margin-top: 4px;">
+                      ${FM.timeAgo(alert.time)} | ${alert.aiAction}
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            ` : `
+              <div style="text-align: center; color: #999; padding: 20px;">目前無 HVAC 系統告警</div>
+            `}
+          </div>
+        </div>
+      `;
+
+      return html;
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // 3.2 各區溫濕度頁面
+    // ────────────────────────────────────────────────────────────────────
+
+    function renderZones() {
+      const { vrvAreas } = hvacData;
+
+      let html = `
+        <div class="grid grid-cols-2 gap-3">
+          ${vrvAreas.map(zone => {
+            const statusBadgeClass = zone.status === 'ok' ? 'ok' : zone.status === 'warn' ? 'warn' : 'crit';
+            const tempDiff = zone.currentTemp - zone.setTemp;
+            const humidDiff = zone.currentHumidity - zone.setHumidity;
+
+            return `
+              <div class="card">
+                <div class="card-header">
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                      <div class="text-sm font-semibold">${FM.spaceTag(zone.code)}</div>
+                      <div class="text-xs text-muted">${zone.name}</div>
+                    </div>
+                    <span class="badge ${statusBadgeClass}" style="font-size: 11px;">
+                      ${zone.status === 'ok' ? '正常' : zone.status === 'warn' ? '偏差' : '異常'}
+                    </span>
+                  </div>
+                </div>
+                <div class="card-body">
+                  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                    <!-- 溫度 -->
+                    <div style="background: #f0f7ff; padding: 12px; border-radius: 6px; border-left: 3px solid #008CD6;">
+                      <div class="text-xs text-muted" style="margin-bottom: 4px;">室溫</div>
+                      <div style="font-size: 18px; font-weight: bold; color: #0054A7;">${zone.currentTemp}°C</div>
+                      <div class="text-xs text-muted" style="margin-top: 4px;">
+                        設定: ${zone.setTemp}°C
+                        <span style="color: ${tempDiff > 0.5 ? '#D35400' : tempDiff < -0.5 ? '#2E86AB' : '#1A7A4A'};">
+                          ${tempDiff > 0 ? '+' : ''}${tempDiff.toFixed(1)}°C
+                        </span>
+                      </div>
+                    </div>
+
+                    <!-- 濕度 -->
+                    <div style="background: #f0fff4; padding: 12px; border-radius: 6px; border-left: 3px solid #00A94F;">
+                      <div class="text-xs text-muted" style="margin-bottom: 4px;">濕度</div>
+                      <div style="font-size: 18px; font-weight: bold; color: #1A7A4A;">${zone.currentHumidity}%</div>
+                      <div class="text-xs text-muted" style="margin-top: 4px;">
+                        設定: ${zone.setHumidity}%
+                        <span style="color: ${humidDiff > 3 ? '#D35400' : humidDiff < -3 ? '#2E86AB' : '#1A7A4A'};">
+                          ${humidDiff > 0 ? '+' : ''}${humidDiff}%
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e0e0e0;">
+                    <div style="display: flex; justify-content: space-between; font-size: 12px; color: #666;">
+                      <span>耗電: ${zone.power} kW</span>
+                      <span>效率: <span style="color: #1A7A4A; font-weight: bold;">${zone.efficiency}%</span></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
+
+      return html;
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // 3.3 異常警告頁面
+    // ────────────────────────────────────────────────────────────────────
+
+    function renderAnomalies() {
+      const { anomalies } = hvacData;
+
+      let html = `
+        <div style="display: flex; flex-direction: column; gap: 16px;">
+          ${anomalies.map(anom => {
+            const iconMap = {
+              'overcool': '❄️',
+              'overheat': '🔥',
+              'idle': '⏸️'
+            };
+            const severityColor = {
+              'crit': '#C0392B',
+              'warn': '#D35400',
+              'info': '#008CD6'
+            };
+
+            return `
+              <div class="card" style="border-left: 4px solid ${severityColor[anom.severity]};">
+                <div class="card-header">
+                  <div style="display: flex; align-items: center; gap: 12px;">
+                    <span style="font-size: 24px;">${iconMap[anom.type]}</span>
+                    <div>
+                      <div class="font-semibold">${FM.spaceTag(anom.code)} — ${anom.name}</div>
+                      <div class="text-xs text-muted">${anom.msg}</div>
+                    </div>
+                    <span class="badge ${anom.severity}" style="margin-left: auto;">
+                      ${anom.severity === 'crit' ? '緊急' : anom.severity === 'warn' ? '警告' : '資訊'}
+                    </span>
+                  </div>
+                </div>
+                <div class="card-body">
+                  <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+                    <div>
+                      <div class="text-xs text-muted">現況溫度</div>
+                      <div style="font-size: 16px; font-weight: bold; color: #0054A7;">${anom.temp}°C</div>
+                    </div>
+                    <div>
+                      <div class="text-xs text-muted">設定溫度</div>
+                      <div style="font-size: 16px; font-weight: bold;">${anom.setTemp}°C</div>
+                    </div>
+                    <div>
+                      <div class="text-xs text-muted">能源浪費</div>
+                      <div style="font-size: 16px; font-weight: bold; color: #D35400;">${anom.energyWaste}%</div>
+                    </div>
+                  </div>
+
+                  <div style="background: #f9f9f9; padding: 12px; border-radius: 6px; margin-bottom: 12px;">
+                    <div class="text-xs font-semibold" style="color: #0054A7; margin-bottom: 6px;">💡 AI 建議</div>
+                    <div class="text-sm">${anom.recommendation}</div>
+                  </div>
+
+                  <div style="display: flex; gap: 8px;">
+                    <button onclick="confirmAnomaly('${anom.code}')" class="btn btn-primary btn-small">確認已處理</button>
+                    <button onclick="FM.showModal('詳細資訊', '異常代碼: ${anom.code}<br>類型: ${anom.type}<br>發現時間: ${new Date().toLocaleTimeString('zh-TW')}', [{ label: '關閉', onclick: 'FM.closeModal()', type: 'secondary' }])" class="btn btn-secondary btn-small">詳情</button>
+                  </div>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
+
+      return html;
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // 3.4 自動排程建議頁面
+    // ────────────────────────────────────────────────────────────────────
+
+    function renderSchedule() {
+      const { autoSchedule } = hvacData;
+
+      let html = `
+        <div class="card" style="margin-bottom: 24px;">
+          <div class="card-header">
+            <h3 class="text-md font-semibold">每日自動啟停建議</h3>
+            <div class="text-xs text-muted" style="margin-top: 4px;">根據人流量與排程規律優化空調啟停，預計月省 12-18%</div>
+          </div>
+          <div class="card-body">
+            <div style="display: flex; flex-direction: column; gap: 12px;">
+              ${autoSchedule.map(sch => {
+                const isNegative = sch.estimatedSaving < 0;
+                const savingColor = isNegative ? '#D35400' : '#1A7A4A';
+                const savingText = isNegative ? `增加 ${Math.abs(sch.estimatedSaving)}%` : `節省 ${sch.estimatedSaving}%`;
+
+                return `
+                  <div style="padding: 16px; background: #f9f9f9; border-radius: 8px; border-left: 4px solid #008CD6;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                      <div class="font-semibold text-sm">${sch.period}</div>
+                      <span class="badge info" style="font-size: 11px; background: #e3f2fd; color: #0054A7;">${sch.action}</span>
+                    </div>
+                    <div class="text-sm text-muted" style="margin-bottom: 8px;">${sch.reason}</div>
+                    <div style="font-size: 12px; color: ${savingColor}; font-weight: bold;">
+                      ${savingText}
+                    </div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3 class="text-md font-semibold">排程管理</h3>
+          </div>
+          <div class="card-body">
+            <div style="background: #f0fff4; padding: 12px; border-radius: 6px; border-left: 3px solid #00A94F; margin-bottom: 12px;">
+              <div class="text-sm" style="color: #1A7A4A;">
+                <strong>✓ 排程已啟用</strong><br>
+                自動排程每日管理 4 個時段，根據歷史人流與溫度曲線自動調整。
+              </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+              <div style="padding: 12px; background: #fff3e0; border-radius: 6px;">
+                <div class="text-xs text-muted">月預期節電</div>
+                <div style="font-size: 18px; font-weight: bold; color: #D35400;">68 kWh</div>
+              </div>
+              <div style="padding: 12px; background: #e3f2fd; border-radius: 6px;">
+                <div class="text-xs text-muted">年預期節費</div>
+                <div style="font-size: 18px; font-weight: bold; color: #0054A7;">$2,960</div>
+              </div>
+            </div>
+
+            <div style="display: flex; gap: 8px;">
+              <button onclick="FM.showModal('啟用排程', '確認自動排程已應用於即時系統？', [
+                { label: '確認', onclick: 'FM.closeModal()', type: 'primary' },
+                { label: '取消', onclick: 'FM.closeModal()', type: 'secondary' }
+              ])" class="btn btn-primary">啟用排程</button>
+              <button onclick="FM.showModal('排程細節', '排程計算基於: 歷史室溫、人流感測、外氣溫度。下次同步: ' + new Date(Date.now() + 3600000).toLocaleTimeString('zh-TW'), [{ label: '關閉', onclick: 'FM.closeModal()', type: 'secondary' }])" class="btn btn-secondary">詳細設定</button>
+            </div>
+          </div>
+        </div>
+      `;
+
+      return html;
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // 3.5 設備控制頁面（空調 + 除濕機）
+    // ────────────────────────────────────────────────────────────────────
+
+    function renderControl() {
+      let html = `
+        <div class="card" style="margin-bottom:20px;">
+          <div class="card-header">
+            <h3 class="text-md font-semibold">空調控制</h3>
+            <div class="text-xs text-muted" style="margin-top:4px;">各區 VRV 室內機開關、運轉模式、設定溫度與風量（即時生效）</div>
+          </div>
+          <div class="card-body">
+            <div class="grid grid-cols-2 gap-3">
+              ${controlState.ac.map(a => {
+                const live = hvacData.vrvAreas.find(z => z.code === a.code);
+                return `
+                  <div class="card" style="border:1px solid #e0e0e0;">
+                    <div class="card-header">
+                      <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <div>
+                          <div class="text-sm font-semibold">${FM.spaceTag(a.code)}</div>
+                          <div class="text-xs text-muted">${a.name}</div>
+                        </div>
+                        <button onclick="toggleAC('${a.code}')" class="btn btn-small" style="background:${a.power ? '#00A94F' : '#bbb'}; color:#fff; border:none;">
+                          ${a.power ? '● 運轉中' : '○ 已關機'}
+                        </button>
+                      </div>
+                    </div>
+                    <div class="card-body" style="${a.power ? '' : 'opacity:.45;'}">
+                      <div style="display:flex; justify-content:space-between; font-size:12px; color:#666; margin-bottom:10px;">
+                        <span>現況室溫 <b style="color:#0054A7;">${live ? live.currentTemp : '--'}°C</b></span>
+                        <span>耗電 <b>${live ? live.power : '--'} kW</b></span>
+                      </div>
+                      <div class="text-xs text-muted" style="margin-bottom:4px;">運轉模式</div>
+                      <div style="display:flex; gap:6px; margin-bottom:12px;">
+                        ${AC_MODES.map(([k, lbl]) => `
+                          <button onclick="setACMode('${a.code}','${k}')" class="btn btn-small" style="flex:1; padding:6px 0; font-size:12px; background:${a.mode === k ? '#0054A7' : '#f0f0f0'}; color:${a.mode === k ? '#fff' : '#333'}; border:1px solid #ddd;">${lbl}</button>
+                        `).join('')}
+                      </div>
+                      <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+                        <span class="text-xs text-muted" style="width:56px;">設定溫度</span>
+                        <button onclick="adjustACTemp('${a.code}',-0.5)" class="btn btn-secondary btn-small">－</button>
+                        <span style="font-size:16px; font-weight:bold; color:#0054A7; min-width:56px; text-align:center;">${a.setTemp}°C</span>
+                        <button onclick="adjustACTemp('${a.code}',0.5)" class="btn btn-secondary btn-small">＋</button>
+                      </div>
+                      <div style="display:flex; align-items:center; gap:6px;">
+                        <span class="text-xs text-muted" style="width:56px;">風量</span>
+                        ${AC_FANS.map(([k, lbl]) => `
+                          <button onclick="setACFan('${a.code}','${k}')" class="btn btn-small" style="flex:1; padding:5px 0; font-size:12px; background:${a.fan === k ? '#008CD6' : '#f0f0f0'}; color:${a.fan === k ? '#fff' : '#333'}; border:1px solid #ddd;">${lbl}</button>
+                        `).join('')}
+                      </div>
+                    </div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3 class="text-md font-semibold">除濕機控制</h3>
+            <div class="text-xs text-muted" style="margin-top:4px;">高濕區吊隱式除濕機（接空調冷凝排水，無集水箱）— 濕度、運轉模式與排水狀態</div>
+          </div>
+          <div class="card-body">
+            <div class="grid grid-cols-2 gap-3">
+              ${controlState.dh.map(d => {
+                const rhOver = d.currentRH > d.targetRH;
+                const drainOk = d.drain === 'ok';
+                return `
+                  <div class="card" style="border:1px solid #e0e0e0;">
+                    <div class="card-header">
+                      <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <div>
+                          <div class="text-sm font-semibold">${FM.spaceTag(d.code)}</div>
+                          <div class="text-xs text-muted">${d.name}除濕機 · 吊隱式 ${d.capacity}L/日</div>
+                        </div>
+                        <button onclick="toggleDH('${d.code}')" class="btn btn-small" style="background:${d.power ? '#00A94F' : '#bbb'}; color:#fff; border:none;">
+                          ${d.power ? '● 運轉中' : '○ 已關機'}
+                        </button>
+                      </div>
+                    </div>
+                    <div class="card-body" style="${d.power ? '' : 'opacity:.45;'}">
+                      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
+                        <div style="background:#f0f7ff; padding:10px; border-radius:6px;">
+                          <div class="text-xs text-muted">目前濕度</div>
+                          <div style="font-size:18px; font-weight:bold; color:${rhOver ? '#D35400' : '#1A7A4A'};">${d.currentRH}%</div>
+                        </div>
+                        <div style="background:#f9f9f9; padding:10px; border-radius:6px;">
+                          <div class="text-xs text-muted">目標濕度</div>
+                          <div style="font-size:18px; font-weight:bold; color:#0054A7;">${d.targetRH}%</div>
+                        </div>
+                      </div>
+                      <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+                        <span class="text-xs text-muted" style="width:56px;">目標濕度</span>
+                        <button onclick="adjustDHTarget('${d.code}',-5)" class="btn btn-secondary btn-small">－</button>
+                        <span style="font-size:16px; font-weight:bold; color:#0054A7; min-width:56px; text-align:center;">${d.targetRH}%</span>
+                        <button onclick="adjustDHTarget('${d.code}',5)" class="btn btn-secondary btn-small">＋</button>
+                      </div>
+                      <div class="text-xs text-muted" style="margin-bottom:4px;">運轉模式</div>
+                      <div style="display:flex; gap:6px; margin-bottom:12px;">
+                        ${DH_MODES.map(([k, lbl]) => `
+                          <button onclick="setDHMode('${d.code}','${k}')" class="btn btn-small" style="flex:1; padding:5px 0; font-size:12px; background:${d.mode === k ? '#008CD6' : '#f0f0f0'}; color:${d.mode === k ? '#fff' : '#333'}; border:1px solid #ddd;">${lbl}</button>
+                        `).join('')}
+                      </div>
+                      <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; border-radius:6px; background:${drainOk ? '#f0fff4' : '#ffebee'};">
+                        <span class="text-xs" style="color:#666;">排水狀態（冷凝排水管）</span>
+                        <span class="badge ${drainOk ? 'ok' : 'crit'}">${drainOk ? '排水正常' : '⚠ 排水異常'}</span>
+                      </div>
+                      ${!drainOk ? `<div class="text-xs" style="color:#C0392B; margin-top:6px;">偵測排水不順，請檢查冷凝排水管（見保養：冷凝水排水管疏通）</div>` : ''}
+                    </div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:20px;">
+          <div class="card-header">
+            <h3 class="text-md font-semibold">操作軌跡（最近）</h3>
+            <div class="text-xs text-muted" style="margin-top:4px;">所有空調/除濕機控制動作自動記錄（保存於本機 localStorage）</div>
+          </div>
+          <div class="card-body">
+            ${(function() {
+              const logs = FM.loadAudit().slice(0, 8);
+              if (!logs.length) return '<div style="text-align:center; color:#999; padding:16px;">尚無操作紀錄，調整上方設備即會記錄</div>';
+              return `<table class="dtable"><thead><tr><th>時間</th><th>動作</th><th>對象</th><th>內容</th></tr></thead><tbody>
+                ${logs.map(l => `<tr>
+                  <td class="text-sm">${new Date(l.t).toLocaleString('zh-TW', { hour12: false })}</td>
+                  <td class="text-sm font-semibold">${l.action}</td>
+                  <td class="text-sm">${l.target}</td>
+                  <td class="text-sm text-muted">${l.detail}</td>
+                </tr>`).join('')}
+              </tbody></table>`;
+            })()}
+          </div>
+        </div>
+      `;
+      return html;
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // 3.6 週期性保養紀錄頁面
+    // ────────────────────────────────────────────────────────────────────
+
+    // 保養狀態判斷沿用共用層 FM.maintInfo（資料：FM.hvacMaintenance）
+
+    function fmtDateOffset(days) {
+      return new Date(Date.now() + days * 86400000).toLocaleDateString('zh-TW');
+    }
+
+    function renderMaintenance() {
+      const items = FM.hvacMaintenance.map((m, i) => Object.assign({ _i: i }, m, FM.maintInfo(m)));
+      const overdue = items.filter(x => x.level === 'overdue').length;
+      const due = items.filter(x => x.level === 'due').length;
+      const ok = items.filter(x => x.level === 'ok').length;
+      const order = { overdue: 0, due: 1, ok: 2 };
+      const sorted = items.slice().sort((a, b) => order[a.level] - order[b.level] || a.remain - b.remain);
+      const cfg = {
+        overdue: { c: '#C0392B', bg: '#ffebee', badge: 'crit', t: '已逾期' },
+        due: { c: '#D35400', bg: '#fff3e0', badge: 'warn', t: '即將到期' },
+        ok: { c: '#1A7A4A', bg: '', badge: 'ok', t: '正常' }
+      };
+
+      let html = `
+        <div class="grid grid-cols-3 gap-3" style="margin-bottom:20px;">
+          <div class="card"><div class="card-body" style="text-align:center; padding:18px;">
+            <div style="font-size:28px; font-weight:bold; color:#C0392B;">${overdue}</div>
+            <div class="text-xs text-muted">已逾期</div></div></div>
+          <div class="card"><div class="card-body" style="text-align:center; padding:18px;">
+            <div style="font-size:28px; font-weight:bold; color:#D35400;">${due}</div>
+            <div class="text-xs text-muted">14 天內到期</div></div></div>
+          <div class="card"><div class="card-body" style="text-align:center; padding:18px;">
+            <div style="font-size:28px; font-weight:bold; color:#1A7A4A;">${ok}</div>
+            <div class="text-xs text-muted">正常</div></div></div>
+        </div>
+
+        ${(overdue + due) > 0 ? `
+          <div style="background:#fff3e0; border-left:4px solid #D35400; padding:12px 16px; border-radius:6px; margin-bottom:16px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+              <div><strong style="color:#D35400;">⚠ 保養警示</strong>　目前有 <b>${overdue}</b> 項逾期、<b>${due}</b> 項即將到期。</div>
+              <button onclick="pushMaintLine()" class="btn btn-small" style="background:#06C755; color:#fff; border:none;">💬 推播 LINE（工務＋主管群）</button>
+            </div>
+            <div class="text-xs" style="color:#8a5a1e; margin-top:8px;">逾期/即將到期已自動進入 <b>中控戰情即時告警</b> 與 <b>派工待指派工單</b>；LINE 每日自動推播一次（可手動補推）。</div>
+          </div>
+        ` : `
+          <div style="background:#f0fff4; border-left:4px solid #00A94F; padding:12px 16px; border-radius:6px; margin-bottom:16px;">
+            <strong style="color:#1A7A4A;">✓ 全部保養項目在週期內</strong>
+          </div>
+        `}
+
+        <div class="card">
+          <div class="card-header">
+            <h3 class="text-md font-semibold">週期性保養紀錄</h3>
+            <div class="text-xs text-muted" style="margin-top:4px;">逾期與即將到期項目優先排序</div>
+          </div>
+          <div class="card-body">
+            <table class="dtable">
+              <thead>
+                <tr>
+                  <th>保養項目</th><th>範圍</th><th>週期</th><th>上次保養</th><th>下次到期</th><th>狀態</th><th>負責</th><th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${sorted.map(x => {
+                  const k = cfg[x.level];
+                  const remainTxt = x.level === 'overdue' ? `逾期 ${Math.abs(x.remain)} 天` : `剩 ${x.remain} 天`;
+                  return `
+                    <tr style="background:${k.bg};">
+                      <td><div class="font-semibold text-sm">${x.item}</div><div class="text-xs text-muted">${x.note}</div></td>
+                      <td class="text-sm">${x.scope}</td>
+                      <td class="text-sm">${x.cycleDays} 天</td>
+                      <td class="text-sm">${fmtDateOffset(-x.daysSinceLast)}</td>
+                      <td class="text-sm" style="color:${k.c}; font-weight:600;">${fmtDateOffset(x.remain)}</td>
+                      <td><span class="badge ${k.badge}">${k.t}</span><div class="text-xs" style="color:${k.c}; margin-top:2px;">${remainTxt}</div></td>
+                      <td class="text-sm">${x.owner}</td>
+                      <td><button onclick="completeMaintenance(${x._i})" class="btn btn-primary btn-small">登記完成</button></td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+      return html;
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // 4. 互動函數
+    // ────────────────────────────────────────────────────────────────────
+
+    const labelOf = (arr, k) => (arr.find(x => x[0] === k) || [, k])[1];
+
+    // 空調控制（每個動作寫入操作軌跡 FM.logAction）
+    function findAC(code) { return controlState.ac.find(a => a.code === code); }
+    function toggleAC(code) { const a = findAC(code); if (a) { a.power = !a.power; FM.logAction(a.power ? '空調開機' : '空調關機', a.name + '（' + code + '）', ''); } renderContent(); }
+    function setACMode(code, mode) { const a = findAC(code); if (a) { a.mode = mode; a.power = true; FM.logAction('空調設模式', a.name, labelOf(AC_MODES, mode)); } renderContent(); }
+    function adjustACTemp(code, delta) { const a = findAC(code); if (a) { a.setTemp = Math.min(30, Math.max(18, Math.round((a.setTemp + delta) * 10) / 10)); FM.logAction('空調設定溫度', a.name, a.setTemp + '°C'); } renderContent(); }
+    function setACFan(code, fan) { const a = findAC(code); if (a) { a.fan = fan; FM.logAction('空調設風量', a.name, labelOf(AC_FANS, fan)); } renderContent(); }
+
+    // 除濕機控制（吊隱式）
+    function findDH(code) { return controlState.dh.find(d => d.code === code); }
+    function toggleDH(code) { const d = findDH(code); if (d) { d.power = !d.power; FM.logAction(d.power ? '除濕機開機' : '除濕機關機', d.name, ''); } renderContent(); }
+    function adjustDHTarget(code, delta) { const d = findDH(code); if (d) { d.targetRH = Math.min(70, Math.max(40, d.targetRH + delta)); FM.logAction('除濕機設定濕度', d.name, d.targetRH + '%'); } renderContent(); }
+    function setDHMode(code, mode) { const d = findDH(code); if (d) { d.mode = mode; FM.logAction('除濕機設模式', d.name, labelOf(DH_MODES, mode)); } renderContent(); }
+
+    // 逾期保養 → 手動補推 LINE
+    function pushMaintLine() { FM.pushMaintenanceLine(); }
+
+    // 保養登記完成確認函數
+    function confirmCompleteMaintenance(idx) {
+      FM.hvacMaintenance[idx].daysSinceLast = 0;
+      FM.syncMaintenanceAlerts();
+      const item = FM.hvacMaintenance[idx].item;
+      const cycleDays = FM.hvacMaintenance[idx].cycleDays;
+      FM.logAction('保養完成', item, '重置週期 ' + cycleDays + ' 天');
+      FM.closeModal();
+      renderContent();
+    }
+
+    // 保養登記完成（重置週期 → 重新同步中控/派工告警 + 寫入軌跡）
+    function completeMaintenance(idx) {
+      const m = FM.hvacMaintenance[idx];
+      if (!m) return;
+      FM.showModal('登記保養完成', '確認「' + m.item + '」已完成本次保養？將重置週期為 ' + m.cycleDays + ' 天，並自中控/派工移除該告警。', [
+        { label: '確認完成', onclick: 'confirmCompleteMaintenance(' + idx + ')', type: 'primary' },
+        { label: '取消', onclick: 'FM.closeModal()', type: 'secondary' }
+      ]);
+    }
+
+    function confirmAnomaly(code) {
+      FM.showModal('確認處理', '已確認異常 ' + code + ' 已處理？', [
+        {
+          label: '確認',
+          onclick: 'FM.closeModal(); alert("已記錄處理時間: " + new Date().toLocaleTimeString("zh-TW"));',
+          type: 'primary'
+        },
+        {
+          label: '取消',
+          onclick: 'FM.closeModal()',
+          type: 'secondary'
+        }
+      ]);
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // 5. 初始化
+    // ────────────────────────────────────────────────────────────────────
+
+    FM.autoPushMaintenance();  // 逾期保養每日自動推播 LINE 一次
+    renderContent();
+  </script>
+</body>
+</html>

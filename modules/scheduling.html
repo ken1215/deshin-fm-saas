@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>排程稼動率 — 德新行政管理平台</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<script src="../assets/app.js"></script>
+<script>
+/* ============================================================================
+   排程稼動率 (Scheduling) 頁面
+   治療床/儀器/診間使用率看板 + 告警 + 熱圖 + 配置建議
+   ============================================================================ */
+
+// 初始化頁面
+FM.renderShell('scheduling', '排程稼動率');
+
+// ──────────────────────────────────────────────────────────────────────────
+// Mock 資料：治療資源稼動率
+// ──────────────────────────────────────────────────────────────────────────
+
+const resourceUtilization = {
+  'B1-震波': { utilization: 92, capacity: 4, booked: 4, available: 0, status: 'danger', room: 'B1', fullName: '物理治療-震波治療室' },
+  'B2-推傷': { utilization: 68, capacity: 3, booked: 2, available: 1, status: 'warning', room: 'B2', fullName: '物理治療-運動推傷室' },
+  'B3-牽引': { utilization: 45, capacity: 2, booked: 1, available: 1, status: 'ok', room: 'B3', fullName: '物理治療-牽引治療室' },
+  'B4-冷療': { utilization: 78, capacity: 2, booked: 2, available: 0, status: 'warning', room: 'B4', fullName: '物理治療-冷療室' },
+  'C1-有氧': { utilization: 55, capacity: 8, booked: 4, available: 4, status: 'ok', room: 'C1', fullName: '運動訓練-有氧訓練區' },
+  'C2-肌力': { utilization: 71, capacity: 6, booked: 4, available: 2, status: 'warning', room: 'C2', fullName: '運動訓練-肌力訓練室' },
+  'C3-矯正': { utilization: 38, capacity: 4, booked: 2, available: 2, status: 'ok', room: 'C3', fullName: '運動訓練-矯正訓練區' },
+  'C4-評測': { utilization: 62, capacity: 2, booked: 1, available: 1, status: 'ok', room: 'C4', fullName: '運動訓練-評測室' },
+  'A1-診間': { utilization: 85, capacity: 3, booked: 3, available: 0, status: 'danger', room: 'A1', fullName: '接待門診-醫師診間' },
+  'A3-候診': { utilization: 42, capacity: 20, booked: 8, available: 12, status: 'ok', room: 'A3', fullName: '接待門診-候診區' }
+};
+
+// 每時段稼動率數據（24 小時尖峰圖）
+const hourlyUtilization = [
+  { hour: '08:00', rate: 35 },
+  { hour: '09:00', rate: 52 },
+  { hour: '10:00', rate: 78 },
+  { hour: '11:00', rate: 92 },
+  { hour: '12:00', rate: 45 },
+  { hour: '13:00', rate: 48 },
+  { hour: '14:00', rate: 68 },
+  { hour: '15:00', rate: 88 },
+  { hour: '16:00', rate: 91 },
+  { hour: '17:00', rate: 85 },
+  { hour: '18:00', rate: 62 },
+  { hour: '19:00', rate: 38 }
+];
+
+// 空間配置合理性評估
+const spaceAssessment = {
+  'B-物理治療': {
+    currentSlots: 11,
+    recommendedSlots: 13,
+    utilization: 72,
+    feedback: '尖峰時段壅塞，建議增加 1-2 個治療床或擴展營業時段',
+    sch_codes: ['7-B1-SCH-01', '7-B2-SCH-01', '7-B3-SCH-01', '7-B4-SCH-01']
+  },
+  'C-運動訓練': {
+    currentSlots: 20,
+    recommendedSlots: 18,
+    utilization: 56,
+    feedback: '利用率適中，可維持現有配置；建議下午 2-5 點提升課程密度',
+    sch_codes: ['7-C1-SCH-01', '7-C2-SCH-01', '7-C3-SCH-01', '7-C4-SCH-01']
+  },
+  'A-接待門診': {
+    currentSlots: 23,
+    recommendedSlots: 25,
+    utilization: 64,
+    feedback: '診間嚴重壅塞（85%），建議增聘醫師或加班診次，候診區充足',
+    sch_codes: ['7-A1-SCH-01', '7-A3-SCH-01']
+  }
+};
+
+// SCH 空間碼示例（排程稼動）
+const scheSpaceCodes = [
+  '7-B1-SCH-01',  // B1 震波治療排程
+  '7-B2-SCH-01',  // B2 推傷治療排程
+  '7-C1-SCH-01',  // C1 有氧訓練排程
+  '7-A1-SCH-01'   // A1 診間排程
+];
+
+// 告警（排程相關）
+const scheduleAlerts = [
+  {
+    id: 'SCH-ALT-001',
+    level: 'crit',
+    space: '7-B1-SCH-01',
+    time: new Date(Date.now() - 3 * 60000),
+    msg: 'B1 震波治療室過度預約，已超過時段容量 150%',
+    aiAction: '建議開放加班診次或轉診至空閒時段',
+    needConfirm: true,
+    confirmed: false
+  },
+  {
+    id: 'SCH-ALT-002',
+    level: 'warn',
+    space: '7-A1-SCH-01',
+    time: new Date(Date.now() - 12 * 60000),
+    msg: '醫師診間連續預約 3 周無休，人力疲勞預警',
+    aiAction: '提醒管理員安排醫師調休或輪班',
+    needConfirm: false,
+    confirmed: false
+  },
+  {
+    id: 'SCH-ALT-003',
+    level: 'info',
+    space: '7-C1-SCH-01',
+    time: new Date(Date.now() - 2 * 3600000),
+    msg: 'C1 有氧訓練區下午場次空檔機會',
+    aiAction: '推薦課程或優惠卡銷售',
+    needConfirm: false,
+    confirmed: true
+  }
+];
+
+// 當前 Tab
+let activeTab = 'overview';
+
+// ──────────────────────────────────────────────────────────────────────────
+// 函式：建構頁面內容
+// ──────────────────────────────────────────────────────────────────────────
+
+function renderSchedulingPage() {
+  // 防禦性檢查：確保 Shell 已初始化
+  if (!document.getElementById('fm-content')) {
+    console.error('Shell 尚未初始化，無法載入排程稼動率頁面');
+    return;
+  }
+
+  let html = '';
+
+  // Tab 導覽
+  html += `
+    <div class="tab-nav">
+      <button class="tab-btn ${activeTab === 'overview' ? 'tab-active' : 'tab-inactive'}" onclick="switchTab('overview')">
+        📊 稼動總覽
+      </button>
+      <button class="tab-btn ${activeTab === 'resources' ? 'tab-active' : 'tab-inactive'}" onclick="switchTab('resources')">
+        🛏️ 資源利用
+      </button>
+      <button class="tab-btn ${activeTab === 'heatmap' ? 'tab-active' : 'tab-inactive'}" onclick="switchTab('heatmap')">
+        🔥 尖峰熱圖
+      </button>
+      <button class="tab-btn ${activeTab === 'assessment' ? 'tab-active' : 'tab-inactive'}" onclick="switchTab('assessment')">
+        💡 配置建議
+      </button>
+      <button class="tab-btn ${activeTab === 'alerts' ? 'tab-active' : 'tab-inactive'}" onclick="switchTab('alerts')">
+        ⚠️ 告警 (${scheduleAlerts.filter(a => !a.confirmed).length})
+      </button>
+    </div>
+  `;
+
+  // 內容區域
+  html += '<div id="tab-content" style="min-height: 600px;">';
+
+  if (activeTab === 'overview') {
+    html += renderOverviewTab();
+  } else if (activeTab === 'resources') {
+    html += renderResourcesTab();
+  } else if (activeTab === 'heatmap') {
+    html += renderHeatmapTab();
+  } else if (activeTab === 'assessment') {
+    html += renderAssessmentTab();
+  } else if (activeTab === 'alerts') {
+    html += renderAlertsTab();
+  }
+
+  html += '</div>';
+
+  FM.loadContent(html);
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Tab 1: 稼動總覽
+// ──────────────────────────────────────────────────────────────────────────
+
+function renderOverviewTab() {
+  let html = '';
+
+  // KPI 卡片區
+  html += '<div class="grid grid-cols-4 gap-3" style="margin-bottom: 30px;">';
+
+  const totalCapacity = Object.values(resourceUtilization).reduce((sum, r) => sum + r.capacity, 0);
+  const totalBooked = Object.values(resourceUtilization).reduce((sum, r) => sum + r.booked, 0);
+  const avgUtilization = Math.round(totalBooked / totalCapacity * 100);
+
+  html += `
+    <div class="card kpi success">
+      <div class="kpi-label">整體稼動率</div>
+      <div class="kpi-value">${avgUtilization}%</div>
+      <div class="kpi-unit">${totalBooked}/${totalCapacity} 時段</div>
+      <div style="text-align: center; margin-top: 10px;">${FM.gauge(avgUtilization)}</div>
+    </div>
+  `;
+
+  const critCount = scheduleAlerts.filter(a => a.level === 'crit' && !a.confirmed).length;
+  html += `
+    <div class="card kpi ${critCount > 0 ? 'danger' : 'success'}">
+      <div class="kpi-label">壅塞告警</div>
+      <div class="kpi-value">${critCount}</div>
+      <div class="kpi-unit">即時預警</div>
+      <div style="text-align: center; margin-top: 10px;"><span class="badge ${critCount > 0 ? 'crit' : 'ok'}"><span class="dot"></span>${critCount > 0 ? '緊急' : '正常'}</span></div>
+    </div>
+  `;
+
+  const overloadedRooms = Object.values(resourceUtilization).filter(r => r.utilization >= 85).length;
+  html += `
+    <div class="card kpi ${overloadedRooms > 0 ? 'warning' : 'success'}">
+      <div class="kpi-label">過載空間</div>
+      <div class="kpi-value">${overloadedRooms}</div>
+      <div class="kpi-unit">個房間 ≥85%</div>
+      <div style="text-align: center; margin-top: 10px;"><span class="badge ${overloadedRooms > 0 ? 'warn' : 'ok'}"><span class="dot"></span>${overloadedRooms > 0 ? '警告' : '正常'}</span></div>
+    </div>
+  `;
+
+  const peakHour = hourlyUtilization.reduce((max, h) => h.rate > max.rate ? h : max);
+  html += `
+    <div class="card kpi warning">
+      <div class="kpi-label">尖峰時段</div>
+      <div class="kpi-value">${peakHour.hour}</div>
+      <div class="kpi-unit">${peakHour.rate}% 稼動</div>
+      <div style="text-align: center; margin-top: 10px;"><span class="badge warn"><span class="dot"></span>高峰</span></div>
+    </div>
+  `;
+
+  html += '</div>';
+
+  // 資源概覽表
+  html += '<div class="card" style="margin-bottom: 30px;">';
+  html += '<div class="card-header">資源概覽（10 個治療床/診間/訓練區）</div>';
+  html += '<div class="card-body">';
+
+  const resourceRows = Object.entries(resourceUtilization).map(([key, res]) => {
+    const statusBadge = res.status === 'danger' ? '<span class="badge crit"><span class="dot"></span>過載</span>' :
+                        res.status === 'warning' ? '<span class="badge warn"><span class="dot"></span>高使用</span>' :
+                        '<span class="badge ok"><span class="dot"></span>正常</span>';
+    const progressColor = res.status === 'danger' ? '#C0392B' : res.status === 'warning' ? '#D35400' : '#1A7A4A';
+
+    return [
+      key,
+      `<strong>${res.fullName}</strong>`,
+      `${res.booked}/${res.capacity}`,
+      `<div class="progress" style="width: 100%; height: 20px; background: #e0e0e0; border-radius: 3px; overflow: hidden; margin: 5px 0;">
+         <div class="progress-bar" style="width: ${res.utilization}%; height: 100%; background: ${progressColor}; display: flex; align-items: center; justify-content: center; color: white; font-size: 12px; font-weight: bold;">${res.utilization}%</div>
+       </div>`,
+      statusBadge
+    ];
+  });
+
+  html += FM.createTable(
+    ['資源碼', '房間名稱', '預約狀況', '利用率', '狀態'],
+    resourceRows
+  );
+
+  html += '</div></div>';
+
+  return html;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Tab 2: 資源利用
+// ──────────────────────────────────────────────────────────────────────────
+
+function renderResourcesTab() {
+  let html = '';
+
+  html += '<div class="grid grid-cols-2 gap-3" style="margin-bottom: 30px;">';
+
+  // 左側：稼動率長條圖
+  html += '<div class="card">';
+  html += '<div class="card-header">稼動率排名</div>';
+  html += '<div class="card-body" style="text-align: center;">';
+
+  const sortedResources = Object.entries(resourceUtilization)
+    .map(([key, res]) => ({ label: key, value: res.utilization }))
+    .sort((a, b) => b.value - a.value);
+
+  html += `<div class="svg-container">${FM.svgBar(sortedResources.slice(0, 8), { width: 400, height: 250, color: '#008CD6' })}</div>`;
+
+  html += '</div></div>';
+
+  // 右側：區域分布圓餅圖
+  html += '<div class="card">';
+  html += '<div class="card-header">區域資源配置</div>';
+  html += '<div class="card-body" style="text-align: center;">';
+
+  const areaDistribution = [
+    { label: '物理治療', value: Object.entries(resourceUtilization).filter(([k]) => k.startsWith('B')).length, color: '#FF6B35' },
+    { label: '運動訓練', value: Object.entries(resourceUtilization).filter(([k]) => k.startsWith('C')).length, color: '#1B998B' },
+    { label: '接待門診', value: Object.entries(resourceUtilization).filter(([k]) => k.startsWith('A')).length, color: '#004E89' }
+  ];
+
+  html += `<div class="svg-container">${FM.svgDonut(areaDistribution)}</div>`;
+  html += '<div style="margin-top: 15px; text-align: left; font-size: 14px;">';
+  areaDistribution.forEach(a => {
+    html += `<div style="margin: 5px 0;"><span style="display: inline-block; width: 12px; height: 12px; background: ${a.color}; margin-right: 8px;"></span>${a.label}: ${a.value} 單位</div>`;
+  });
+  html += '</div>';
+
+  html += '</div></div>';
+
+  html += '</div>';
+
+  // 詳細資源列表
+  html += '<div class="card">';
+  html += '<div class="card-header">詳細資源預約狀況</div>';
+  html += '<div class="card-body">';
+
+  const resourceDetails = Object.entries(resourceUtilization).map(([key, res]) => {
+    const spaceCodes = {
+      'B1-震波': '7-B1-SCH-01',
+      'B2-推傷': '7-B2-SCH-01',
+      'B3-牽引': '7-B3-SCH-01',
+      'B4-冷療': '7-B4-SCH-01',
+      'C1-有氧': '7-C1-SCH-01',
+      'C2-肌力': '7-C2-SCH-01',
+      'C3-矯正': '7-C3-SCH-01',
+      'C4-評測': '7-C4-SCH-01',
+      'A1-診間': '7-A1-SCH-01',
+      'A3-候診': '7-A3-SCH-01'
+    };
+
+    const sc = spaceCodes[key];
+    if (!sc) {
+      console.warn(`資源稼動率: 資源碼 '${key}' 未定義空間碼對應，應添加至 spaceCodes 物件`);
+    }
+    return [
+      `${FM.spaceTag(sc || key)}`,
+      `${res.fullName}`,
+      `${res.booked} 人 / ${res.capacity} 位`,
+      `<div class="sparkline" style="display: inline-block;">${FM.sparkline([res.utilization - 10, res.utilization, res.utilization + 5, res.utilization - 3])}</div>`,
+      `${res.available} 位空檔`
+    ];
+  });
+
+  html += FM.createTable(
+    ['空間碼', '房間', '預約', '趨勢迷你圖', '可用性'],
+    resourceDetails
+  );
+
+  html += '</div></div>';
+
+  return html;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Tab 3: 尖峰熱圖
+// ──────────────────────────────────────────────────────────────────────────
+
+function renderHeatmapTab() {
+  let html = '';
+
+  html += '<div class="grid grid-cols-2 gap-3" style="margin-bottom: 30px;">';
+
+  // 左側：每時段稼動率折線圖
+  html += '<div class="card">';
+  html += '<div class="card-header">日間稼動率曲線</div>';
+  html += '<div class="card-body" style="text-align: center;">';
+
+  const hourlyData = hourlyUtilization.map(h => h.rate);
+  const hourlyLabels = hourlyUtilization.map(h => h.hour);
+
+  html += `<div class="svg-container">${FM.svgLine([
+    { label: '整體稼動率', data: hourlyData, color: '#E76F51' }
+  ])}</div>`;
+
+  html += '<div style="margin-top: 15px; font-size: 13px; color: #666;">';
+  html += '尖峰時段：10:00-11:00（92%）、15:00-16:00（91%）。<br>';
+  html += '建議早上提前 1 小時開放診療，下午加強預約轉診管理。';
+  html += '</div>';
+
+  html += '</div></div>';
+
+  // 右側：時段分佈表
+  html += '<div class="card">';
+  html += '<div class="card-header">時段稼動分級</div>';
+  html += '<div class="card-body">';
+
+  const heatmapRows = hourlyUtilization.map(h => {
+    const level = h.rate >= 85 ? 'crit' : h.rate >= 70 ? 'warn' : 'ok';
+    const levelLabel = h.rate >= 85 ? '過載' : h.rate >= 70 ? '高峰' : '正常';
+    const color = h.rate >= 85 ? '#C0392B' : h.rate >= 70 ? '#D35400' : '#1A7A4A';
+
+    return [
+      h.hour,
+      `<div style="background: ${color}; color: white; padding: 4px 8px; border-radius: 3px; text-align: center; font-weight: bold;">${h.rate}%</div>`,
+      levelLabel,
+      `<span style="font-size: 14px;">` + (h.rate >= 85 ? '🔥' : h.rate >= 70 ? '⚠️' : '✓') + `</span>`
+    ];
+  });
+
+  html += FM.createTable(['時段', '稼動率', '分級', '圖示'], heatmapRows);
+
+  html += '</div></div>';
+
+  html += '</div>';
+
+  // 熱力圖視覺化
+  html += '<div class="card">';
+  html += '<div class="card-header">日間熱力分佈 (12時段)</div>';
+  html += '<div class="card-body">';
+  html += '<div class="heatmap-grid">';
+
+  hourlyUtilization.forEach(h => {
+    const color = h.rate >= 85 ? '#C0392B' : h.rate >= 70 ? '#D35400' : h.rate >= 50 ? '#F18F01' : '#B8E6D5';
+    html += `<div class="heatmap-cell" style="background: ${color};">
+      ${h.hour}<br>${h.rate}%
+    </div>`;
+  });
+
+  html += '</div>';
+  html += '<div style="margin-top: 15px; font-size: 12px; display: flex; gap: 20px;">';
+  html += '<div><span style="display: inline-block; width: 16px; height: 16px; background: #C0392B; margin-right: 5px;"></span>過載 (≥85%)</div>';
+  html += '<div><span style="display: inline-block; width: 16px; height: 16px; background: #D35400; margin-right: 5px;"></span>高峰 (70-84%)</div>';
+  html += '<div><span style="display: inline-block; width: 16px; height: 16px; background: #F18F01; margin-right: 5px;"></span>中等 (50-69%)</div>';
+  html += '<div><span style="display: inline-block; width: 16px; height: 16px; background: #B8E6D5; margin-right: 5px;"></span>低利用 (<50%)</div>';
+  html += '</div>';
+  html += '</div></div>';
+
+  return html;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Tab 4: 配置建議
+// ──────────────────────────────────────────────────────────────────────────
+
+function renderAssessmentTab() {
+  let html = '';
+
+  html += '<div class="grid grid-cols-1 gap-3" style="margin-bottom: 30px;">';
+
+  Object.entries(spaceAssessment).forEach(([area, assess]) => {
+    const statusClass = assess.utilization >= 75 ? 'danger' : assess.utilization >= 55 ? 'warning' : 'success';
+    const recommendation = assess.utilization >= 75 ? '⚠️ 需改善' : assess.utilization >= 55 ? '⚡ 可優化' : '✓ 良好';
+
+    html += `
+      <div class="card kpi ${statusClass}" style="padding: 20px;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+          <div>
+            <div class="kpi-label">${area}</div>
+            <div class="kpi-value" style="color: inherit;">${assess.utilization}%</div>
+            <div class="kpi-unit">目前利用率</div>
+          </div>
+          <div>
+            <div class="kpi-label">現有配置</div>
+            <div class="kpi-value" style="color: inherit;">${assess.currentSlots}</div>
+            <div class="kpi-unit">個時段</div>
+          </div>
+          <div>
+            <div class="kpi-label">建議配置</div>
+            <div class="kpi-value" style="color: inherit;">${assess.recommendedSlots}</div>
+            <div class="kpi-unit">個時段</div>
+          </div>
+        </div>
+        <div style="background: rgba(255,255,255,0.2); padding: 15px; border-radius: 4px; margin-bottom: 10px;">
+          <strong style="display: block; margin-bottom: 5px;">${recommendation} - 管理員建議</strong>
+          <div style="font-size: 14px; line-height: 1.6; margin: 5px 0;">
+            ${assess.feedback}
+          </div>
+        </div>
+        <div style="display: flex; gap: 10px; font-size: 12px;">
+          <button class="btn btn-secondary btn-small" onclick="FM.showModal('${area} 詳細分析', '分析中...')">詳細分析</button>
+          <button class="btn btn-primary btn-small" onclick="FM.showModal('${area} 改善方案', '1. 增加營業時段<br>2. 加聘人力<br>3. 轉診機制<br>4. 排班調整')">改善方案</button>
+        </div>
+      </div>
+    `;
+  });
+
+  html += '</div>';
+
+  // 全面配置檢查清單
+  html += '<div class="card">';
+  html += '<div class="card-header">配置檢查清單 (Space Validation)</div>';
+  html += '<div class="card-body">';
+
+  const validationRows = [
+    [
+      '✓',
+      '<strong>診療區(A)</strong>',
+      '3 個診間',
+      '≥25',
+      '<span style="color: #D35400;">23</span>',
+      '合理'
+    ],
+    [
+      '❌',
+      '<strong>治療區(B)</strong>',
+      '4 個治療室',
+      '≥15',
+      '<span style="color: #C0392B;">11</span>',
+      '不足'
+    ],
+    [
+      '✓',
+      '<strong>訓練區(C)</strong>',
+      '4 個訓練區',
+      '≥18',
+      '<span style="color: #1A7A4A;">20</span>',
+      '充足'
+    ]
+  ];
+
+  html += FM.createTable(
+    ['狀態', '區域', '房間數', '建議時段', '實際時段', '評估'],
+    validationRows
+  );
+
+  html += '<div style="margin-top: 15px; padding: 12px; background: #FFF3CD; border-left: 4px solid #D35400; border-radius: 3px; font-size: 13px;">';
+  html += '<strong>核心發現：</strong> B 區治療床數量不足，導致尖峰時段 100% 滿載。建議立即加床或建立轉診轉院機制。';
+  html += '</div>';
+  html += '</div></div>';
+
+  return html;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Tab 5: 告警
+// ──────────────────────────────────────────────────────────────────────────
+
+function renderAlertsTab() {
+  let html = '';
+
+  const alertStats = {
+    crit: scheduleAlerts.filter(a => a.level === 'crit').length,
+    warn: scheduleAlerts.filter(a => a.level === 'warn').length,
+    info: scheduleAlerts.filter(a => a.level === 'info').length,
+    unconfirmed: scheduleAlerts.filter(a => !a.confirmed).length
+  };
+
+  html += '<div class="grid grid-cols-4 gap-3" style="margin-bottom: 20px;">';
+  html += `<div class="card kpi danger"><div class="kpi-label">緊急告警</div><div class="kpi-value">${alertStats.crit}</div><div class="kpi-unit">即時待處理</div></div>`;
+  html += `<div class="card kpi warning"><div class="kpi-label">一般告警</div><div class="kpi-value">${alertStats.warn}</div><div class="kpi-unit">工單待開</div></div>`;
+  html += `<div class="card kpi success"><div class="kpi-label">資訊告警</div><div class="kpi-value">${alertStats.info}</div><div class="kpi-unit">日報記錄</div></div>`;
+  html += `<div class="card kpi info"><div class="kpi-label">待確認</div><div class="kpi-value">${alertStats.unconfirmed}</div><div class="kpi-unit">人工確認</div></div>`;
+  html += '</div>';
+
+  // 告警列表
+  html += '<div class="card">';
+  html += '<div class="card-header">排程告警清單</div>';
+  html += '<div class="card-body">';
+
+  const alertRows = scheduleAlerts.map(alert => {
+    const levelBadge = alert.level === 'crit' ? '<span class="badge crit"><span class="dot"></span>緊急</span>' :
+                       alert.level === 'warn' ? '<span class="badge warn"><span class="dot"></span>一般</span>' :
+                       '<span class="badge info"><span class="dot"></span>資訊</span>';
+
+    const confirmBtn = alert.needConfirm && !alert.confirmed
+      ? `<button class="btn btn-primary btn-small" onclick="confirmAndRefresh('${alert.id}')">確認處理</button>`
+      : `<span class="text-sm" style="color: #999;">已確認</span>`;
+
+    return [
+      levelBadge,
+      `${FM.spaceTag(alert.space)}<br><small>${alert.msg}</small>`,
+      alert.aiAction,
+      `<small>${FM.timeAgo(alert.time)}</small><br>${confirmBtn}`
+    ];
+  });
+
+  html += FM.createTable(
+    ['等級', '空間 / 告警訊息', 'AI 建議動作', '時間 / 確認'],
+    alertRows,
+    { alertRows: scheduleAlerts.map((a, i) => a.level === 'crit' ? i : -1).filter(i => i >= 0) }
+  );
+
+  html += '</div></div>';
+
+  return html;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Tab 切換 & 確認告警函式
+// ──────────────────────────────────────────────────────────────────────────
+
+function switchTab(tabName) {
+  activeTab = tabName;
+  renderSchedulingPage();
+}
+
+function confirmAndRefresh(alertId) {
+  const alert = scheduleAlerts.find(a => a.id === alertId);
+  if (alert) {
+    alert.confirmed = true;
+    FM.showModal(
+      '告警已確認',
+      `<strong>${alert.msg}</strong><br><br>建議動作：${alert.aiAction}<br><br>相關空間：${FM.spaceTag(alert.space)}`,
+      [{ label: '關閉', type: 'primary', onclick: 'FM.closeModal(); switchTab("alerts");' }]
+    );
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// 頁面初始化
+// ──────────────────────────────────────────────────────────────────────────
+
+renderSchedulingPage();
+
+</script>
+
+</body>
+</html>

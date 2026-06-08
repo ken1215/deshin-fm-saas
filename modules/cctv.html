@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>影像監控/櫃檯熱力 — 德新行政管理平台</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <style>
+    /* CCTV 即時影像佔位 */
+    .cam {
+      position: relative; border-radius: 6px; overflow: hidden;
+      background: linear-gradient(135deg, #1a2332 0%, #0d1620 100%);
+      aspect-ratio: 16 / 9; border: 1px solid #2a3a4a;
+    }
+    .cam.offline { background: repeating-linear-gradient(45deg,#222,#222 8px,#2a2a2a 8px,#2a2a2a 16px); }
+    .cam .scan { position:absolute; inset:0;
+      background: repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(255,255,255,.025) 3px, rgba(255,255,255,.025) 4px); }
+    .cam .rec { position:absolute; top:6px; left:8px; display:flex; align-items:center; gap:5px;
+      font-size:10px; color:#fff; font-weight:700; letter-spacing:.5px; }
+    .cam .rec .blink { width:8px; height:8px; border-radius:50%; background:#ff3b30; animation: camblink 1.4s infinite; }
+    @keyframes camblink { 0%,100%{opacity:1} 50%{opacity:.2} }
+    .cam .ts { position:absolute; bottom:6px; right:8px; font-size:10px; color:#9fd6ff; font-family:monospace; }
+    .cam .loc { position:absolute; bottom:6px; left:8px; font-size:10px; color:#cfe8ff; }
+    .cam .ppl { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); text-align:center; color:#fff; }
+    .cam .ppl .n { font-size:28px; font-weight:800; line-height:1; }
+    .cam .ppl .l { font-size:10px; color:#8fb8d8; margin-top:2px; }
+    /* 去識別化人形框 */
+    .cam .blob { position:absolute; border:1.5px solid rgba(0,200,255,.55); border-radius:3px; background:rgba(0,200,255,.08); }
+    .cam .evt { position:absolute; top:6px; right:8px; font-size:9px; font-weight:700; padding:2px 6px; border-radius:10px; }
+    /* 熱力圖 */
+    .hm { display:grid; gap:3px; }
+    .hm .cell { aspect-ratio:1; border-radius:3px; display:flex; align-items:center; justify-content:center; font-size:10px; color:#fff; font-weight:600; }
+    .hm .axis { font-size:11px; color:#888; display:flex; align-items:center; }
+  </style>
+</head>
+<body>
+  <div id="fm-shell"></div>
+  <div id="fm-content"></div>
+
+  <script src="../assets/app.js"></script>
+  <script>
+    FM.renderShell('cctv', '影像監控 / 櫃檯熱力分析');
+
+    // ============================================================================
+    // 模擬資料（去識別化，僅統計人數，不存個人影像特徵）
+    // ============================================================================
+    const camData = {
+      cameras: [
+        { id:'7-A1-CCTV-01', name:'迎賓大廳', online:true, people:8, max:20, event:null,
+          blobs:[[20,55,12,28],[42,48,11,26],[63,58,12,30],[78,50,10,24]] },
+        { id:'7-A2-CCTV-02', name:'候診休息區', online:true, people:14, max:18, event:'滯留',
+          blobs:[[12,50,11,26],[30,55,11,28],[46,48,10,24],[60,52,11,27],[75,56,12,29]] },
+        { id:'7-A1-CCTV-03', name:'報到櫃檯', online:true, people:5, max:12, event:null,
+          blobs:[[30,52,12,28],[52,50,11,26],[70,55,11,27]] },
+        { id:'7-C1-CCTV-04', name:'運動訓練區', online:true, people:9, max:25, event:'跌倒偵測',
+          blobs:[[18,40,14,38],[44,55,12,28],[68,50,11,26]] },
+        { id:'7-B2-CCTV-05', name:'物理治療區', online:true, people:6, max:14, event:null,
+          blobs:[[25,52,12,28],[50,50,11,26],[72,54,11,27]] },
+        { id:'7-A4-CCTV-06', name:'轉診/出入口', online:false, people:0, max:10, event:null, blobs:[] },
+      ],
+      // 候診/櫃檯熱力（區域 × 時段，0-100 密度）
+      zones: ['迎賓大廳','報到櫃檯','候診休息區','諮詢室','轉診窗口'],
+      hours: ['08','09','10','11','12','13','14','15','16','17','18'],
+      heat: [
+        [20,45,70,85,60,35,55,75,80,50,25],   // 迎賓大廳
+        [30,60,88,92,55,40,68,90,86,52,20],   // 報到櫃檯
+        [25,55,82,95,70,45,72,93,88,58,28],   // 候診休息區
+        [10,30,55,62,40,25,48,65,60,38,15],   // 諮詢室
+        [8,22,40,48,30,18,35,50,46,28,10],    // 轉診窗口
+      ],
+      // 滯留/等候分析
+      dwell: [
+        { zone:'候診休息區', code:'7-A2', avgWait:18, peak:'11:00 / 15:00', overload:true, count:14 },
+        { zone:'報到櫃檯', code:'7-A1', avgWait:6, peak:'10:30 / 15:30', overload:false, count:5 },
+        { zone:'諮詢室', code:'7-A3', avgWait:12, peak:'11:00', overload:false, count:3 },
+      ],
+      // 候診人數 24h（去識別化計數）
+      waitTrend: [3,2,2,4,9,16,22,25,18,12,15,24,28,20,14,10,16,23,19,11,7,5,4,3],
+      // AI 影像事件
+      events: [
+        { id:'CCTV-E001', level:'crit', code:'7-C1-CCTV-04', type:'跌倒偵測',
+          msg:'運動訓練區偵測到疑似跌倒姿態（去識別化骨架判定）',
+          time: Date.now()-120000, aiAction:'AI建議：即時通報現場運醫老師＋護理站，調閱前後10秒影像', needConfirm:true, confirmed:false },
+        { id:'CCTV-E002', level:'warn', code:'7-A2-CCTV-02', type:'候診滯留',
+          msg:'候診休息區滯留 14 人、平均等候 18 分鐘，超過服務水準（15 分）',
+          time: Date.now()-600000, aiAction:'AI建議：加開報到櫃檯人力／推播叫號，紓解候診壅塞', needConfirm:false, confirmed:false },
+        { id:'CCTV-E003', level:'warn', code:'7-A1-CCTV-01', type:'人流超載',
+          msg:'迎賓大廳瞬時人數接近容留上限（8/20 趨勢上升）',
+          time: Date.now()-1500000, aiAction:'AI建議：監測動線，必要時引導分流至 B 區候診', needConfirm:false, confirmed:true },
+        { id:'CCTV-E004', level:'info', code:'7-A4-CCTV-06', type:'設備巡檢',
+          msg:'轉診/出入口鏡頭離線逾 30 分鐘，影像巡檢中斷',
+          time: Date.now()-1900000, aiAction:'AI建議：派工檢查 CCTV-06 供電與網路，恢復影像', needConfirm:true, confirmed:false },
+      ],
+      privacy: [
+        ['去識別化處理','即時骨架／人形框偵測，僅輸出「人數、姿態、滯留時間」統計值，不儲存可辨識人臉特徵'],
+        ['影像保留天數','事件片段保留 30 天、一般影像 7 天，到期自動刪除（可依院方政策調整）'],
+        ['法規依循','個人資料保護法、醫療機構電子病歷及影像管理規範；公共區域明顯處張貼監視告示'],
+        ['存取控管','影像調閱需經授權並留存稽核軌跡；AI 事件僅推播分級通報，不外流原始影像'],
+        ['分區分級','診療區（B/C）採最高隱私分級，僅供安全事件（跌倒）回溯，平時不顯示即時畫面細節'],
+      ]
+    };
+
+    // 併入全域告警
+    FM.alerts = FM.alerts.concat(camData.events.map(e => ({
+      id:e.id, level:e.level, space:e.code, time:new Date(e.time), system:'CCTV',
+      msg:e.type+'：'+e.msg, aiAction:e.aiAction, needConfirm:e.needConfirm, confirmed:e.confirmed
+    })));
+
+    let activeTab = 'live';
+
+    function heatColor(v){
+      // 綠→黃→紅
+      if (v < 35) return '#1A7A4A';
+      if (v < 55) return '#5B9E3A';
+      if (v < 70) return '#E0A800';
+      if (v < 85) return '#E8730C';
+      return '#C0392B';
+    }
+    function nowTs(){ const d=new Date(); return d.toLocaleString('zh-TW',{hour12:false}); }
+
+    // ============================================================================
+    function render(){
+      const online = camData.cameras.filter(c=>c.online).length;
+      const totalPpl = camData.cameras.reduce((s,c)=>s+c.people,0);
+      const pendingEvt = camData.events.filter(e=>e.needConfirm && !e.confirmed).length;
+      const avgWait = Math.round(camData.dwell.reduce((s,d)=>s+d.avgWait,0)/camData.dwell.length);
+
+      let html = `
+        <div class="grid grid-cols-4 gap-3 mb-4">
+          <div class="kpi success"><div class="kpi-icon">📹</div><div class="kpi-value">${online}/${camData.cameras.length}</div><div class="kpi-unit">線上</div><div class="kpi-label">鏡頭在線</div></div>
+          <div class="kpi"><div class="kpi-icon">👥</div><div class="kpi-value">${totalPpl}</div><div class="kpi-unit">人</div><div class="kpi-label">即時總人流(去識別)</div></div>
+          <div class="kpi warning"><div class="kpi-icon">⏱️</div><div class="kpi-value">${avgWait}</div><div class="kpi-unit">分</div><div class="kpi-label">候診平均等候</div></div>
+          <div class="kpi danger"><div class="kpi-icon">🚨</div><div class="kpi-value">${pendingEvt}</div><div class="kpi-unit">件</div><div class="kpi-label">待確認 AI 事件</div></div>
+        </div>
+        <div class="card mb-4">
+          <div class="card-header">
+            <div style="display:flex; gap:8px; border-bottom:2px solid #f5f5f5; padding-bottom:0; flex-wrap:wrap;">
+              <button class="tab-btn ${activeTab==='live'?'active':''}" onclick="switchTab('live')">📹 即時監控</button>
+              <button class="tab-btn ${activeTab==='heat'?'active':''}" onclick="switchTab('heat')">🔥 櫃檯熱力分析</button>
+              <button class="tab-btn ${activeTab==='events'?'active':''}" onclick="switchTab('events')">🧠 AI 影像事件 (${camData.events.filter(e=>!e.confirmed).length})</button>
+              <button class="tab-btn ${activeTab==='privacy'?'active':''}" onclick="switchTab('privacy')">🔒 隱私合規</button>
+            </div>
+          </div>
+          <div class="card-body">${tabContent()}</div>
+        </div>
+      `;
+      FM.loadContent(html);
+    }
+
+    function tabContent(){
+      if (activeTab==='live') return liveTab();
+      if (activeTab==='heat') return heatTab();
+      if (activeTab==='events') return eventsTab();
+      if (activeTab==='privacy') return privacyTab();
+      return '';
+    }
+
+    // 即時監控
+    function liveTab(){
+      let h = '<div class="mb-3"><h3 class="section-title">即時影像牆（去識別化人形偵測）</h3></div>';
+      h += '<div class="grid grid-cols-3 gap-3" style="--responsive-cols:auto;">';
+      camData.cameras.forEach(c=>{
+        const evtColor = c.event==='跌倒偵測' ? '#C0392B' : c.event==='滯留' ? '#E8730C' : '#008CD6';
+        let blobs = '';
+        if (c.online) c.blobs.forEach(b=> blobs += `<div class="blob" style="left:${b[0]}%; top:${b[1]}%; width:${b[2]}%; height:${b[3]}%;"></div>`);
+        h += `
+          <div class="card" style="padding:0; overflow:hidden;">
+            <div class="cam ${c.online?'':'offline'}">
+              ${c.online ? `
+                <div class="scan"></div>
+                ${blobs}
+                <div class="rec"><span class="blink"></span>LIVE · REC</div>
+                ${c.event ? `<div class="evt" style="background:${evtColor};color:#fff;">${c.event}</div>` : ''}
+                <div class="ppl"><div class="n">${c.people}</div><div class="l">人 / 容留 ${c.max}</div></div>
+                <div class="loc">${c.name}</div>
+                <div class="ts" id="ts-${c.id}">${nowTs()}</div>
+              ` : `
+                <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#888; font-size:13px;">⚠ 訊號中斷</div>
+                <div class="loc">${c.name}</div>
+              `}
+            </div>
+            <div style="padding:8px 10px; display:flex; justify-content:space-between; align-items:center;">
+              <span>${FM.spaceTag(c.id)}</span>
+              <span class="badge ${c.online?'ok':'crit'}">${c.online?'線上':'離線'}</span>
+            </div>
+          </div>
+        `;
+      });
+      h += '</div>';
+      h += `<div class="text-muted text-sm" style="margin-top:10px;">＊畫面為去識別化示意：藍框為 AI 偵測之人形位置，系統僅輸出人數與姿態統計，不儲存人臉特徵。</div>`;
+      return h;
+    }
+
+    // 櫃檯熱力分析
+    function heatTab(){
+      let h = '<div class="mb-3"><h3 class="section-title">候診 / 櫃檯人流熱力圖（區域 × 時段）</h3></div>';
+      // 熱力圖
+      const cols = camData.hours.length;
+      h += `<div style="overflow-x:auto;"><div class="hm" style="grid-template-columns: 110px repeat(${cols}, 1fr); min-width:640px;">`;
+      h += `<div class="axis"></div>`;
+      camData.hours.forEach(hr=> h += `<div class="axis" style="justify-content:center;">${hr}</div>`);
+      camData.zones.forEach((z,zi)=>{
+        h += `<div class="axis">${z}</div>`;
+        camData.heat[zi].forEach(v=> h += `<div class="cell" style="background:${heatColor(v)};" title="${z} ${''}：${v}%">${v}</div>`);
+      });
+      h += `</div></div>`;
+      h += `<div style="display:flex; gap:14px; align-items:center; margin:10px 0 18px; font-size:12px; color:#888;">
+              密度
+              <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:14px;height:14px;background:#1A7A4A;border-radius:3px;display:inline-block;"></span>低</span>
+              <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:14px;height:14px;background:#E0A800;border-radius:3px;display:inline-block;"></span>中</span>
+              <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:14px;height:14px;background:#C0392B;border-radius:3px;display:inline-block;"></span>高(壅塞)</span>
+            </div>`;
+
+      // 候診人數趨勢
+      h += '<div class="mb-3"><h3 class="section-title">候診人數 24 小時趨勢</h3></div>';
+      h += `<div style="text-align:center; margin-bottom:18px;">${FM.svgLine([{label:'候診人數', data:camData.waitTrend, color:'#008CD6'}])}</div>`;
+
+      // 滯留分析
+      h += '<div class="mb-3"><h3 class="section-title">滯留與等候分析</h3></div>';
+      h += `<table class="dtable"><thead><tr><th>區域</th><th>即時人數</th><th>平均等候</th><th>尖峰時段</th><th>狀態</th></tr></thead><tbody>`;
+      camData.dwell.forEach(d=>{
+        h += `<tr class="${d.overload?'alert-row':''}">
+          <td><strong>${d.zone}</strong><br><span class="text-muted text-sm">${FM.spaceTag(d.code+'-CCTV-01')}</span></td>
+          <td><strong>${d.count}</strong> 人</td>
+          <td>${d.avgWait} 分${d.avgWait>15?' <span class="badge warn">超標</span>':''}</td>
+          <td class="text-muted">${d.peak}</td>
+          <td>${d.overload?'<span class="badge crit">壅塞</span>':'<span class="badge ok">順暢</span>'}</td>
+        </tr>`;
+      });
+      h += `</tbody></table>`;
+      h += `<div class="text-muted text-sm" style="margin-top:10px;">＊熱力與滯留數據可回饋至「排程稼動率」模組，驗證候診空間配置與櫃檯人力是否足夠。</div>`;
+      return h;
+    }
+
+    // AI 影像事件
+    function eventsTab(){
+      let h = '<div class="mb-3"><h3 class="section-title">AI 影像事件（跌倒 / 滯留 / 超載 / 設備巡檢）</h3></div>';
+      h += `<table class="dtable"><thead><tr><th>事件</th><th>位置</th><th>AI 建議動作</th><th>確認狀態</th></tr></thead><tbody>`;
+      camData.events.forEach(e=>{
+        const isCrit = e.level==='crit';
+        h += `<tr class="${isCrit?'alert-row':''}">
+          <td>
+            <div style="margin-bottom:6px;"><span class="badge ${e.level}">${e.level==='crit'?'緊急':e.level==='warn'?'警告':'資訊'}</span> <strong>${e.type}</strong></div>
+            <div class="text-muted text-sm">${e.msg}</div>
+            <div class="text-muted text-sm" style="margin-top:4px;">${FM.timeAgo(e.time)}</div>
+          </td>
+          <td style="white-space:nowrap;">${FM.spaceTag(e.code)}</td>
+          <td>
+            <div style="background:#f9f9f9; padding:8px; border-radius:4px;"><div class="text-sm" style="line-height:1.6;">${e.aiAction}</div></div>
+            ${e.needConfirm && !e.confirmed ? `<div style="margin-top:8px;"><button class="btn btn-danger btn-small" onclick="confirmEvt('${e.id}')">✓ 人工確認處理</button></div>`:''}
+          </td>
+          <td style="white-space:nowrap; text-align:center;">
+            ${e.confirmed ? '<span class="badge ok">已確認</span>' : isCrit ? '<span class="badge crit">待確認</span>' : '<span class="badge info">已記錄</span>'}
+          </td>
+        </tr>`;
+      });
+      h += `</tbody></table>`;
+      return h;
+    }
+
+    // 隱私合規
+    function privacyTab(){
+      let h = '<div class="mb-3"><h3 class="section-title">影像隱私與法規合規</h3></div>';
+      h += `<div class="grid grid-cols-2 gap-3" style="--responsive-cols:auto;">`;
+      camData.privacy.forEach(p=>{
+        h += `<div class="card"><div class="card-header"><h3>${p[0]}</h3><span class="badge ok">已落實</span></div>
+               <div class="card-body"><div class="text-sm" style="line-height:1.7;">${p[1]}</div></div></div>`;
+      });
+      h += `</div>`;
+      h += `<div class="card mt-4" style="margin-top:16px;">
+              <div class="card-header"><h3>鏡頭清單與隱私分級</h3></div>
+              <div class="card-body">
+                <table class="dtable"><thead><tr><th>鏡頭</th><th>位置</th><th>隱私分級</th><th>狀態</th></tr></thead><tbody>`;
+      camData.cameras.forEach(c=>{
+        const lvl = c.id.includes('-B')||c.id.includes('-C') ? '最高（診療區）' : '一般（公共區）';
+        h += `<tr><td><strong>${c.name}</strong></td><td>${FM.spaceTag(c.id)}</td><td>${lvl}</td><td>${c.online?'<span class="badge ok">運作中</span>':'<span class="badge crit">離線</span>'}</td></tr>`;
+      });
+      h += `</tbody></table></div></div>`;
+      return h;
+    }
+
+    // ============================================================================
+    function switchTab(t){ activeTab=t; render(); }
+    function confirmEvt(id){
+      const e = camData.events.find(x=>x.id===id);
+      if (e){ e.confirmed=true;
+        const container = document.createElement('div');
+        const p1 = document.createElement('p');
+        p1.innerHTML = '已記錄對影像事件 <strong>' + e.type + '</strong> 的人工確認處理。';
+        const p2 = document.createElement('p');
+        p2.style.marginTop = '8px';
+        p2.style.color = '#666';
+        p2.style.fontSize = '14px';
+        p2.textContent = e.aiAction;
+        const p3 = document.createElement('p');
+        p3.style.marginTop = '8px';
+        p3.style.padding = '8px';
+        p3.style.background = '#d4edda';
+        p3.style.borderRadius = '4px';
+        p3.style.color = '#155724';
+        p3.textContent = '✓ 已通報相關人員，並調閱事件前後影像存證（30 天保留）';
+        container.appendChild(p1);
+        container.appendChild(p2);
+        container.appendChild(p3);
+        FM.showModal('事件已確認', container,
+          [{label:'關閉', type:'primary', onclick:"FM.closeModal(); render();"}]);
+      }
+    }
+
+    // 即時時間戳更新（每秒）
+    function tickTs(){
+      camData.cameras.forEach(c=>{ if(c.online){ const el=document.getElementById('ts-'+c.id); if(el) el.textContent=nowTs(); } });
+    }
+    FM.cctvTimer = setInterval(tickTs, 1000);
+    window.addEventListener('beforeunload', function(){ if(FM.cctvTimer) clearInterval(FM.cctvTimer); });
+
+    render();
+  </script>
+</body>
+</html>

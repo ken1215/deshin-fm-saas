@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>給排水/漏水 — 德新行政管理平台</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+  <div id="fm-shell"></div>
+  <div id="fm-content"></div>
+
+  <script src="../assets/app.js"></script>
+  <script>
+    // 初始化頁面
+    FM.renderShell('water', '給排水');
+
+    // ============================================================================
+    // 模擬資料
+    // ============================================================================
+    const waterData = {
+      // 各區水表用量 (m³)
+      meters: [
+        { id: '7-A1-WTR-01', area: 'A', room: '1', name: '接待門診區用水', usage: 24.3, quota: 50, unit: 'm³', lastUpdate: Date.now() - 3600000 },
+        { id: '7-B2-WTR-01', area: 'B', room: '2', name: '物理治療B2用水', usage: 18.7, quota: 40, unit: 'm³', lastUpdate: Date.now() - 5400000 },
+        { id: '7-B3-WTR-02', area: 'B', room: '3', name: '震波區用水', usage: 32.1, quota: 45, unit: 'm³', lastUpdate: Date.now() - 1800000 },
+        { id: '7-C1-WTR-01', area: 'C', room: '1', name: '運動訓練區用水', usage: 28.5, quota: 50, unit: 'm³', lastUpdate: Date.now() - 2700000 },
+        { id: '7-D2-WTR-01', area: 'D', room: '2', name: '後勤行政用水', usage: 12.4, quota: 35, unit: 'm³', lastUpdate: Date.now() - 4200000 },
+        { id: '7-E1-WTR-01', area: 'E', room: '1', name: '輔助區通用用水', usage: 45.2, quota: 60, unit: 'm³', lastUpdate: Date.now() - 900000 },
+      ],
+
+      // 漏水感測點狀態
+      // 編碼規則：7-[Area][Room]-WTR-[Point]，例 7-E2-WTR-03 為 E 區 2 號房間 WTR 子系統 03 號感測點
+      leakSensors: [
+        { id: '7-E2-WTR-01', area: 'E', room: '2', name: '淋浴間感測', location: '浴室北牆', status: 'ok', humidity: 42, threshold: 75, lastAlert: null },
+        { id: '7-B4-WTR-02', area: 'B', room: '4', name: '冰敷區感測', location: '冷凍櫃下方', status: 'warn', humidity: 68, threshold: 75, lastAlert: Date.now() - 1800000 },
+        { id: '7-E3-WTR-03', area: 'E', room: '3', name: '製冰機感測', location: '製冰機背牆', status: 'crit', humidity: 82, threshold: 75, lastAlert: Date.now() - 300000 },
+        { id: '7-D1-WTR-04', area: 'D', room: '1', name: '主管線感測', location: '天花板維修口', status: 'ok', humidity: 38, threshold: 75, lastAlert: null },
+        { id: '7-C2-WTR-05', area: 'C', room: '2', name: '訓練區防水牆', location: '牆面中部', status: 'ok', humidity: 45, threshold: 75, lastAlert: null },
+      ],
+
+      // 專用用水監測
+      specialUse: [
+        { id: '7-E3-WTR-06', subsystem: 'MK', name: '製冰機', flow: 0.5, quota: 2.0, status: 'ok', temp: 2, lastCycle: Date.now() - 1200000 },
+        { id: '7-E2-WTR-02', subsystem: 'SH', name: '淋浴間', flow: 0.8, quota: 1.5, status: 'ok', users: 0, lastUse: Date.now() - 600000 },
+        { id: '7-B4-WTR-03', subsystem: 'IC', name: '冰敷間', flow: 0.3, quota: 1.0, status: 'warn', temp: 3, lastCycle: Date.now() - 450000 },
+      ],
+
+      // 模擬告警
+      alerts: [
+        {
+          id: 'WTR-A001',
+          level: 'crit',
+          code: '7-E3-WTR-03',
+          name: '製冰機感測濕度超過閾值',
+          msg: '製冰機背牆濕度 82% (閾值 75%，已超過 7%)，可能漏水',
+          time: Date.now() - 300000,
+          system: 'WTR',
+          aiAction: 'AI建議：立即關閉製冰機進水閥門，派工檢查背牆防水及冷凝管接口',
+          needConfirm: true,
+          confirmed: false,
+          confirmTime: null,
+          confirmBy: null
+        },
+        {
+          id: 'WTR-A002',
+          level: 'warn',
+          code: '7-B4-WTR-02',
+          name: '冰敷區濕度升高',
+          msg: '冷凍櫃下方濕度 68% (閾值 75%)，接近警戒',
+          time: Date.now() - 1800000,
+          system: 'WTR',
+          aiAction: 'AI建議：於下次查房時檢查冷凍櫃周圍，確認排水口是否暢通',
+          needConfirm: false,
+          confirmed: true,
+          confirmTime: Date.now() - 900000,
+          confirmBy: 'C001 王護理師'
+        },
+        {
+          id: 'WTR-A003',
+          level: 'info',
+          code: '7-E1-WTR-01',
+          name: '輔助區用水超過月均值',
+          msg: '本月累計用水 45.2m³，超過平均 40m³ (+12.5%)，日常耗水量增加',
+          time: Date.now() - 86400000,
+          system: 'WTR',
+          aiAction: 'AI建議：記錄於月報，下月持續監測',
+          needConfirm: false,
+          confirmed: true,
+          confirmTime: Date.now() - 82800000,
+          confirmBy: '日報彙整'
+        }
+      ]
+    };
+
+    // 將告警加入全域 FM.alerts
+    FM.alerts = FM.alerts.concat(waterData.alerts);
+
+    // ============================================================================
+    // 標籤頁狀態
+    // ============================================================================
+    let activeTab = 'meters';
+
+    // ============================================================================
+    // 渲染主內容
+    // ============================================================================
+    function renderWaterContent() {
+      let html = '';
+
+      // 戰情摘要卡片（頂部）
+      html += `
+        <div class="grid grid-cols-4 gap-3 mb-4">
+          <div class="kpi success">
+            <div class="kpi-icon">💧</div>
+            <div class="kpi-value">${FM.fmtNum(waterData.meters.reduce((s, m) => s + m.usage, 0))}</div>
+            <div class="kpi-unit">m³</div>
+            <div class="kpi-label">本月用水</div>
+          </div>
+          <div class="kpi warning">
+            <div class="kpi-icon">⚠️</div>
+            <div class="kpi-value">${waterData.leakSensors.filter(s => s.status !== 'ok').length}</div>
+            <div class="kpi-unit">處</div>
+            <div class="kpi-label">異常感測點</div>
+          </div>
+          <div class="kpi danger">
+            <div class="kpi-icon">🚨</div>
+            <div class="kpi-value">${waterData.alerts.filter(a => a.level === 'crit' && !a.confirmed).length}</div>
+            <div class="kpi-unit">件</div>
+            <div class="kpi-label">緊急告警</div>
+          </div>
+          <div class="kpi success">
+            <div class="kpi-icon">✓</div>
+            <div class="kpi-value">${waterData.leakSensors.filter(s => s.status === 'ok').length}/${waterData.leakSensors.length}</div>
+            <div class="kpi-unit">正常</div>
+            <div class="kpi-label">防水監測</div>
+          </div>
+        </div>
+      `;
+
+      // 標籤頁切換
+      html += `
+        <div class="card mb-4">
+          <div class="card-header">
+            <div style="display: flex; gap: 8px; border-bottom: 2px solid #f5f5f5; padding-bottom: 0;">
+              <button class="tab-btn ${activeTab === 'meters' ? 'active' : ''}" onclick="switchTab('meters')">
+                📊 水表用量
+              </button>
+              <button class="tab-btn ${activeTab === 'leaks' ? 'active' : ''}" onclick="switchTab('leaks')">
+                💧 漏水感測
+              </button>
+              <button class="tab-btn ${activeTab === 'special' ? 'active' : ''}" onclick="switchTab('special')">
+                ❄️ 專用用水
+              </button>
+              <button class="tab-btn ${activeTab === 'alerts' ? 'active' : ''}" onclick="switchTab('alerts')">
+                🚨 告警 (${waterData.alerts.filter(a => !a.confirmed).length})
+              </button>
+            </div>
+          </div>
+          <div class="card-body">
+            ${renderTabContent()}
+          </div>
+        </div>
+      `;
+
+      FM.loadContent(html);
+    }
+
+    // ============================================================================
+    // 標籤頁內容渲染
+    // ============================================================================
+    function renderTabContent() {
+      if (activeTab === 'meters') {
+        return renderMetersTab();
+      } else if (activeTab === 'leaks') {
+        return renderLeaksTab();
+      } else if (activeTab === 'special') {
+        return renderSpecialTab();
+      } else if (activeTab === 'alerts') {
+        return renderAlertsTab();
+      }
+      return '';
+    }
+
+    // 標籤頁：水表用量
+    function renderMetersTab() {
+      let html = '<div class="mb-3"><h3 class="section-title">各區水表用量監測</h3></div>';
+      html += '<div class="grid grid-cols-2 gap-3" style="--responsive-cols: auto;">';
+
+      waterData.meters.forEach(meter => {
+        const pct = Math.round((meter.usage / meter.quota) * 100);
+        const status = pct < 80 ? 'success' : pct < 95 ? 'warning' : 'danger';
+        const statusLabel = pct < 80 ? '正常' : pct < 95 ? '接近上限' : '超過預算';
+
+        html += `
+          <div class="card">
+            <div class="card-header">
+              <h3>${meter.name}</h3>
+              <span class="badge ${pct < 80 ? 'ok' : pct < 95 ? 'warn' : 'crit'}">${statusLabel}</span>
+            </div>
+            <div class="card-body">
+              <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                <span>${FM.spaceTag(meter.id)}</span>
+                <span class="text-muted text-sm">${FM.timeAgo(meter.lastUpdate)}</span>
+              </div>
+              <div style="margin: 12px 0;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                  <strong>${meter.usage}m³</strong>
+                  <span class="text-muted">/ ${meter.quota}m³</span>
+                </div>
+                <div class="progress">
+                  <div class="progress-bar ${status}" style="width: ${Math.min(pct, 100)}%;"></div>
+                </div>
+              </div>
+              <div style="text-align: right; color: #0054A7; font-size: 12px;">
+                使用率 ${pct}%
+              </div>
+            </div>
+          </div>
+        `;
+      });
+
+      html += '</div>';
+      return html;
+    }
+
+    // 標籤頁：漏水感測
+    function renderLeaksTab() {
+      let html = '<div class="mb-3"><h3 class="section-title">防水區濕度監測</h3></div>';
+      html += `
+        <table class="dtable">
+          <thead>
+            <tr>
+              <th>位置</th>
+              <th>濕度</th>
+              <th>狀態</th>
+              <th>最後更新</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+
+      waterData.leakSensors.forEach(sensor => {
+        const isAlert = sensor.status !== 'ok';
+        html += `
+          <tr ${isAlert ? 'class="alert-row"' : ''}>
+            <td>
+              <strong>${sensor.name}</strong><br>
+              <span class="text-muted text-sm">${FM.spaceTag(sensor.id)} · ${sensor.location}</span>
+            </td>
+            <td>
+              <div style="font-weight: bold; margin-bottom: 4px;">
+                ${sensor.humidity}%
+                <span class="dot ${sensor.status}"></span>
+              </div>
+              <div class="progress" style="height: 6px;">
+                <div class="progress-bar ${sensor.status}" style="width: ${sensor.humidity}%;"></div>
+              </div>
+              <div class="text-muted text-sm">閾值 ${sensor.threshold}%</div>
+            </td>
+            <td>
+              <span class="badge ${sensor.status}">${sensor.status === 'ok' ? '正常' : sensor.status === 'warn' ? '警告' : '緊急'}</span>
+            </td>
+            <td class="text-muted text-sm">
+              ${sensor.lastAlert ? FM.timeAgo(sensor.lastAlert) : '未告警'}
+            </td>
+          </tr>
+        `;
+      });
+
+      html += `
+          </tbody>
+        </table>
+      `;
+      return html;
+    }
+
+    // 標籤頁：專用用水
+    function renderSpecialTab() {
+      let html = '<div class="mb-3"><h3 class="section-title">製冰/淋浴/冰敷用水監測</h3></div>';
+      html += '<div class="grid grid-cols-3 gap-3" style="--responsive-cols: auto;">';
+
+      waterData.specialUse.forEach(item => {
+        const pct = Math.round((item.flow / item.quota) * 100);
+        const status = pct < 80 ? 'success' : 'warning';
+
+        let details = '';
+        if (item.subsystem === 'MK') {
+          details = `<div class="text-muted text-sm">溫度: ${item.temp}°C · 最後製冰: ${FM.timeAgo(item.lastCycle)}</div>`;
+        } else if (item.subsystem === 'SH') {
+          details = `<div class="text-muted text-sm">目前用戶: ${item.users} 人 · 最後使用: ${FM.timeAgo(item.lastUse)}</div>`;
+        } else if (item.subsystem === 'IC') {
+          details = `<div class="text-muted text-sm">溫度: ${item.temp}°C · 最後運轉: ${FM.timeAgo(item.lastCycle)}</div>`;
+        }
+
+        html += `
+          <div class="card">
+            <div class="card-header">
+              <h3>${item.name}</h3>
+              <span class="badge ${status}">${status === 'success' ? '正常' : '超限'}</span>
+            </div>
+            <div class="card-body">
+              <div style="margin: 12px 0;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                  <strong>${item.flow.toFixed(1)}</strong>
+                  <span class="text-muted">/ ${item.quota.toFixed(1)} m³/次</span>
+                </div>
+                <div class="progress">
+                  <div class="progress-bar ${status}" style="width: ${Math.min(pct, 100)}%;"></div>
+                </div>
+              </div>
+              ${details}
+            </div>
+          </div>
+        `;
+      });
+
+      html += '</div>';
+      return html;
+    }
+
+    // 標籤頁：告警
+    function renderAlertsTab() {
+      let html = '<div class="mb-3"><h3 class="section-title">漏水告警 + AI 關斷建議</h3></div>';
+
+      if (waterData.alerts.length === 0) {
+        html += '<div style="text-align: center; padding: 32px; color: #999;">暫無告警</div>';
+        return html;
+      }
+
+      html += `
+        <table class="dtable">
+          <thead>
+            <tr>
+              <th>告警</th>
+              <th>位置</th>
+              <th>AI 建議動作</th>
+              <th>確認狀態</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+
+      waterData.alerts.forEach(alert => {
+        const isCrit = alert.level === 'crit';
+        const isConfirmed = alert.confirmed;
+
+        html += `
+          <tr class="${isCrit ? 'alert-row' : ''}">
+            <td>
+              <div style="margin-bottom: 8px;">
+                <span class="badge ${alert.level}">${alert.level === 'crit' ? '緊急' : alert.level === 'warn' ? '警告' : '資訊'}</span>
+              </div>
+              <div style="font-weight: bold; margin-bottom: 4px;">${alert.name}</div>
+              <div class="text-muted text-sm">${alert.msg}</div>
+              <div class="text-muted text-sm" style="margin-top: 4px;">${FM.timeAgo(alert.time)}</div>
+            </td>
+            <td style="white-space: nowrap;">
+              ${FM.spaceTag(alert.code)}
+            </td>
+            <td>
+              <div style="background: #f9f9f9; padding: 8px; border-radius: 4px; margin: 8px 0;">
+                <div class="text-sm" style="line-height: 1.6;">
+                  ${alert.aiAction}
+                </div>
+              </div>
+              ${isCrit && alert.needConfirm && !isConfirmed ? `
+                <div style="margin-top: 8px;">
+                  <button class="btn btn-danger btn-small" onclick="confirmAlert('${alert.id}')">
+                    ✓ 人工確認關斷
+                  </button>
+                </div>
+              ` : ''}
+            </td>
+            <td style="white-space: nowrap; text-align: center;">
+              ${isConfirmed ? `
+                <div style="color: #1A7A4A;">
+                  <div class="badge ok">已確認</div>
+                  <div class="text-muted text-sm" style="margin-top: 4px;">
+                    ${FM.timeAgo(alert.confirmTime)}<br>
+                    ${alert.confirmBy}
+                  </div>
+                </div>
+              ` : isCrit ? `
+                <div style="color: #C0392B;">
+                  <div class="badge crit">待確認</div>
+                  <div class="text-sm font-bold" style="margin-top: 8px; color: #C0392B;">
+                    需人工確認
+                  </div>
+                </div>
+              ` : `
+                <div class="badge info">已自動記錄</div>
+              `}
+            </td>
+          </tr>
+        `;
+      });
+
+      html += `
+          </tbody>
+        </table>
+      `;
+
+      return html;
+    }
+
+    // ============================================================================
+    // 交互函數
+    // ============================================================================
+    function switchTab(tab) {
+      activeTab = tab;
+      renderWaterContent();
+    }
+
+    function confirmAlert(alertId) {
+      const alert = waterData.alerts.find(a => a.id === alertId);
+      if (alert) {
+        alert.confirmed = true;
+        alert.confirmTime = Date.now();
+        alert.confirmBy = 'C002 值班工程師';
+        FM.showModal(
+          '確認完成',
+          `<p>已記錄對告警 <strong>${alert.name}</strong> 的人工確認。</p>
+           <p style="margin-top: 8px; color: #666; font-size: 14px;">
+             建議動作：${alert.aiAction}
+           </p>
+           <p style="margin-top: 8px; padding: 8px; background: #d4edda; border-radius: 4px; color: #155724;">
+             ✓ 派工單已自動生成，工務組將於 30 分鐘內到場
+           </p>`,
+          [
+            { label: '關閉', type: 'primary', onclick: "FM.closeModal(); renderWaterContent();" }
+          ]
+        );
+      }
+    }
+
+    // ============================================================================
+    // 初始渲染
+    // ============================================================================
+    renderWaterContent();
+  </script>
+</body>
+</html>

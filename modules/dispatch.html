@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Agent 報修派工中控 — 德新行政管理平台</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <style>
+    /* dispatch.html 專用樣式 */
+    .kanban-col {
+      min-height: 300px;
+      flex: 1;
+    }
+
+    .kanban-col-empty {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #ccc;
+      font-size: 12px;
+      min-height: 200px;
+    }
+
+    .tab-btn-group {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+      border-bottom: 1px solid #e0e0e0;
+      padding-bottom: 8px;
+    }
+
+    .tab-btn {
+      padding: 8px 12px;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      color: #666;
+      transition: all 0.2s;
+      border-bottom: 2px solid transparent;
+    }
+
+    .tab-btn:hover {
+      color: #333;
+    }
+
+    .tab-btn.active {
+      color: var(--color-primary-light);
+      border-bottom-color: var(--color-primary-light);
+    }
+
+    .tab-content {
+      display: none;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    @media (max-width: 768px) {
+      .grid.grid-cols-3 {
+        grid-template-columns: 1fr;
+      }
+
+      .kanban-col {
+        min-height: 200px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <script src="../assets/app.js"></script>
+  <script>
+    /* =====================================================================
+       AI Agent 報修派工中控 (dispatch.html)
+       核心功能：
+       - 跨系統告警匯流總表 + AI分級去重
+       - AI分級邏輯展示(緊急→即時通報/一般→工單/資訊→日報)
+       - 工單看板(待指派/進行中/完成)
+       - 人工確認關卡區(採購/關斷/派工等高風險)
+       - 全系統空間碼彙整
+       ===================================================================== */
+
+    // 初始化頁面
+    FM.renderShell('dispatch', 'AI Agent 報修派工中控');
+
+    /* ─────────────────────────────────────────────────────────────────────── */
+    /* 1. 擴展告警陣列 — 加入派工狀態與優先等級                                */
+    /* ─────────────────────────────────────────────────────────────────────── */
+
+    // 在現有 FM.alerts 基礎上加入派工狀態與人工確認
+    FM.alerts.forEach((alert, idx) => {
+      if (!alert.ticketId) {
+        alert.ticketId = `TK-${String(2601 + idx).padStart(4, '0')}`;
+        alert.status = ['待指派', '進行中', '完成'][Math.floor(Math.random() * 3)];
+        alert.priority = alert.level === 'crit' ? '高' : alert.level === 'warn' ? '中' : '低';
+        alert.assignee = alert.status === '待指派' ? '未指派' : ['王技師', '李機電', '張檢修'][Math.floor(Math.random() * 3)];
+        alert.confirmAction = ['派工', '關斷', '採購', '巡檢'][Math.floor(Math.random() * 4)];
+        alert.riskLevel = alert.confirmAction === '派工' ? '中' : alert.confirmAction === '關斷' ? '高' : '低';
+      }
+    });
+
+    // 去重邏輯：同一空間碼，只保留最嚴重級別的告警
+    // （防止同一空間多筆告警在派工時被重複計算）
+    const deduplicateAlerts = function() {
+      const seen = {};
+      const levelOrder = { crit: 0, warn: 1, info: 2 };
+      FM.alerts.forEach(a => {
+        const key = a.space;  // 僅以空間碼為去重 key
+        if (!seen[key]) {
+          seen[key] = a;
+        } else {
+          // 保留優先級更高的告警（級別順序：crit < warn < info）
+          if (levelOrder[a.level] < levelOrder[seen[key].level]) {
+            seen[key] = a;
+          }
+        }
+      });
+      return Object.values(seen);
+    };
+
+    const dedupAlerts = deduplicateAlerts();
+
+    /* ─────────────────────────────────────────────────────────────────────── */
+    /* 2. 統計與過濾狀態                                                      */
+    /* ─────────────────────────────────────────────────────────────────────── */
+
+    let activeTab = 'flow';  // 'flow' | 'tickets' | 'confirm'
+    let filterStatus = 'all'; // 'all' | '待指派' | '進行中' | '完成'
+    let filterLevel = 'all';  // 'all' | 'crit' | 'warn' | 'info'
+
+    const getFilteredAlerts = () => {
+      let result = dedupAlerts;
+      if (filterStatus !== 'all') {
+        result = result.filter(a => a.status === filterStatus);
+      }
+      if (filterLevel !== 'all') {
+        result = result.filter(a => a.level === filterLevel);
+      }
+      return result;
+    };
+
+    const getNeedsConfirm = () => {
+      return FM.alerts.filter(a => a.needConfirm && !a.confirmed);
+    };
+
+    /* ─────────────────────────────────────────────────────────────────────── */
+    /* 3. 構建主內容 HTML                                                     */
+    /* ─────────────────────────────────────────────────────────────────────── */
+
+    const renderDispatchPage = function() {
+      let html = `
+        <div class="p-4">
+          <!-- 頂部 KPI 統計 -->
+          <div class="grid grid-cols-4 gap-3 mb-4">
+            <div class="kpi danger">
+              <div class="kpi-icon">🚨</div>
+              <div class="kpi-label">緊急未確認</div>
+              <div class="kpi-value">${FM.alerts.filter(a => a.level === 'crit' && !a.confirmed).length}</div>
+            </div>
+            <div class="kpi warning">
+              <div class="kpi-icon">⚠️</div>
+              <div class="kpi-label">一般工單</div>
+              <div class="kpi-value">${FM.alerts.filter(a => a.level === 'warn').length}</div>
+            </div>
+            <div class="kpi success">
+              <div class="kpi-icon">📋</div>
+              <div class="kpi-label">已完成工單</div>
+              <div class="kpi-value">${FM.alerts.filter(a => a.status === '完成').length}</div>
+            </div>
+            <div class="kpi info">
+              <div class="kpi-icon">👤</div>
+              <div class="kpi-label">待人工確認</div>
+              <div class="kpi-value">${getNeedsConfirm().length}</div>
+            </div>
+          </div>
+
+          <!-- Tab 切換（事件委派） -->
+          <div class="tab-btn-group" id="dispatch-tabs">
+            <button class="tab-btn ${activeTab === 'flow' ? 'active' : ''}" data-tab="flow">
+              📊 AI分級流程
+            </button>
+            <button class="tab-btn ${activeTab === 'tickets' ? 'active' : ''}" data-tab="tickets">
+              🎫 工單看板 (${getFilteredAlerts().length})
+            </button>
+            <button class="tab-btn ${activeTab === 'confirm' ? 'active' : ''}" data-tab="confirm">
+              ✋ 人工確認關卡 (${getNeedsConfirm().length})
+            </button>
+          </div>
+
+          <!-- Tab 1: AI 分級邏輯流程 -->
+          <div id="tab-flow" class="tab-content ${activeTab === 'flow' ? 'active' : ''}">
+            ${renderFlowDiagram()}
+          </div>
+
+          <!-- Tab 2: 工單看板 -->
+          <div id="tab-tickets" class="tab-content ${activeTab === 'tickets' ? 'active' : ''}">
+            ${renderTicketBoard()}
+          </div>
+
+          <!-- Tab 3: 人工確認關卄 -->
+          <div id="tab-confirm" class="tab-content ${activeTab === 'confirm' ? 'active' : ''}">
+            ${renderConfirmPanel()}
+          </div>
+
+          <!-- 跨系統空間碼彙整 -->
+          <div class="mt-6">
+            <h3 class="section-title">🗺️ 全系統空間碼彙整</h3>
+            ${renderSpaceCodeSummary()}
+          </div>
+        </div>
+      `;
+
+      FM.loadContent(html);
+      attachEventListeners();
+    };
+
+    /* ─────────────────────────────────────────────────────────────────────── */
+    /* 4. AI 分級流程圖表                                                     */
+    /* ─────────────────────────────────────────────────────────────────────── */
+
+    const renderFlowDiagram = function() {
+      const critAlerts = FM.alerts.filter(a => a.level === 'crit');
+      const warnAlerts = FM.alerts.filter(a => a.level === 'warn');
+      const infoAlerts = FM.alerts.filter(a => a.level === 'info');
+
+      return `
+        <div class="grid grid-cols-3 gap-4 mb-6">
+          <!-- 緊急路徑 -->
+          <div class="card" style="border-left: 4px solid #C0392B;">
+            <div class="card-header" style="background-color: rgba(192, 57, 43, 0.1);">
+              <span style="font-size: 20px;">🚨</span> 緊急 (Critical)
+            </div>
+            <div class="card-body">
+              <div class="kpi danger" style="margin-bottom: 12px; padding: 12px;">
+                <div class="kpi-value">${critAlerts.length}</div>
+                <div class="kpi-label">告警</div>
+              </div>
+              <div class="text-sm" style="margin: 8px 0; padding: 8px; background: #fff3cd; border-radius: 4px;">
+                <strong>AI 動作：</strong>
+                <ul style="margin: 4px 0 0 16px;">
+                  <li>自動分級檢測</li>
+                  <li>即時通報管理層</li>
+                  <li>自動斷路/關斷</li>
+                  <li>緊急派工</li>
+                </ul>
+              </div>
+              <div style="margin-top: 8px; padding: 8px; background: #f8f9fa; border-radius: 4px;">
+                <strong style="color: #C0392B;">需人工確認：</strong>
+                <div class="text-sm" style="margin-top: 4px;">關斷、採購、派遣</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 一般路徑 -->
+          <div class="card" style="border-left: 4px solid #D35400;">
+            <div class="card-header" style="background-color: rgba(211, 84, 0, 0.1);">
+              <span style="font-size: 20px;">⚠️</span> 一般 (Warning)
+            </div>
+            <div class="card-body">
+              <div class="kpi warning" style="margin-bottom: 12px; padding: 12px;">
+                <div class="kpi-value">${warnAlerts.length}</div>
+                <div class="kpi-label">告警</div>
+              </div>
+              <div class="text-sm" style="margin: 8px 0; padding: 8px; background: #fff3cd; border-radius: 4px;">
+                <strong>AI 動作：</strong>
+                <ul style="margin: 4px 0 0 16px;">
+                  <li>自動分級檢測</li>
+                  <li>開工單</li>
+                  <li>優先安排派工</li>
+                  <li>通知值班技師</li>
+                </ul>
+              </div>
+              <div style="margin-top: 8px; padding: 8px; background: #f8f9fa; border-radius: 4px;">
+                <strong style="color: #D35400;">需人工確認：</strong>
+                <div class="text-sm" style="margin-top: 4px;">派工、採購</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 資訊路徑 -->
+          <div class="card" style="border-left: 4px solid #008CD6;">
+            <div class="card-header" style="background-color: rgba(0, 140, 214, 0.1);">
+              <span style="font-size: 20px;">ℹ️</span> 資訊 (Info)
+            </div>
+            <div class="card-body">
+              <div class="kpi info" style="margin-bottom: 12px; padding: 12px;">
+                <div class="kpi-value">${infoAlerts.length}</div>
+                <div class="kpi-label">告警</div>
+              </div>
+              <div class="text-sm" style="margin: 8px 0; padding: 8px; background: #fff3cd; border-radius: 4px;">
+                <strong>AI 動作：</strong>
+                <ul style="margin: 4px 0 0 16px;">
+                  <li>自動分級檢測</li>
+                  <li>納入日報記錄</li>
+                  <li>定期追蹤</li>
+                  <li>趨勢分析</li>
+                </ul>
+              </div>
+              <div style="margin-top: 8px; padding: 8px; background: #f8f9fa; border-radius: 4px;">
+                <strong style="color: #008CD6;">需人工確認：</strong>
+                <div class="text-sm" style="margin-top: 4px;">無需確認</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 去重邏輯展示 -->
+        <div class="card mb-6">
+          <div class="card-header">
+            🔄 AI 去重邏輯
+          </div>
+          <div class="card-body">
+            <p class="text-sm mb-2">
+              <strong>規則：</strong>同一空間碼，若有多筆告警，只保留優先級最高的（緊急 > 一般 > 資訊），確保派工流程中空間碼唯一性
+            </p>
+            <p class="text-sm">
+              <strong>原始告警數：</strong> ${FM.alerts.length} |
+              <strong>去重後：</strong> ${dedupAlerts.length} |
+              <strong>減少：</strong> ${FM.alerts.length - dedupAlerts.length} 筆
+            </p>
+          </div>
+        </div>
+
+        <!-- 最近告警詳表 -->
+        <div class="card">
+          <div class="card-header">
+            📋 跨系統告警匯流總表 (去重)
+          </div>
+          <div class="card-body" style="overflow-x: auto;">
+            ${renderAlertTable(dedupAlerts)}
+          </div>
+        </div>
+      `;
+    };
+
+    /* ─────────────────────────────────────────────────────────────────────── */
+    /* 5. 工單看板 (Kanban)                                                   */
+    /* ─────────────────────────────────────────────────────────────────────── */
+
+    const renderTicketBoard = function() {
+      const filtered = getFilteredAlerts();
+
+      return `
+        <div class="mb-4 flex gap-2">
+          <label class="text-sm">
+            <input type="radio" name="status-filter" value="all" data-filter="status"
+                   ${filterStatus === 'all' ? 'checked' : ''}>
+            全部 (${dedupAlerts.length})
+          </label>
+          <label class="text-sm">
+            <input type="radio" name="status-filter" value="待指派" data-filter="status"
+                   ${filterStatus === '待指派' ? 'checked' : ''}>
+            待指派 (${dedupAlerts.filter(a => a.status === '待指派').length})
+          </label>
+          <label class="text-sm">
+            <input type="radio" name="status-filter" value="進行中" data-filter="status"
+                   ${filterStatus === '進行中' ? 'checked' : ''}>
+            進行中 (${dedupAlerts.filter(a => a.status === '進行中').length})
+          </label>
+          <label class="text-sm">
+            <input type="radio" name="status-filter" value="完成" data-filter="status"
+                   ${filterStatus === '完成' ? 'checked' : ''}>
+            完成 (${dedupAlerts.filter(a => a.status === '完成').length})
+          </label>
+          <span style="margin-left: auto;">
+            <label class="text-sm">
+              <input type="radio" name="level-filter" value="all" data-filter="level"
+                     ${filterLevel === 'all' ? 'checked' : ''}>
+              全部等級
+            </label>
+            <label class="text-sm">
+              <input type="radio" name="level-filter" value="crit" data-filter="level"
+                     ${filterLevel === 'crit' ? 'checked' : ''}>
+              🚨 緊急
+            </label>
+            <label class="text-sm">
+              <input type="radio" name="level-filter" value="warn" data-filter="level"
+                     ${filterLevel === 'warn' ? 'checked' : ''}>
+              ⚠️ 一般
+            </label>
+            <label class="text-sm">
+              <input type="radio" name="level-filter" value="info" data-filter="level"
+                     ${filterLevel === 'info' ? 'checked' : ''}>
+              ℹ️ 資訊
+            </label>
+          </span>
+        </div>
+
+        <div class="grid grid-cols-3 gap-4">
+          <!-- 待指派 -->
+          <div class="card kanban-col">
+            <div class="card-header" style="background-color: #f8f9fa;">
+              📌 待指派
+            </div>
+            <div class="card-body p-0">
+              ${filtered.filter(a => a.status === '待指派').map(a => renderTicketCard(a)).join('')}
+              ${filtered.filter(a => a.status === '待指派').length === 0 ? '<div class="kanban-col-empty">無工單</div>' : ''}
+            </div>
+          </div>
+
+          <!-- 進行中 -->
+          <div class="card kanban-col">
+            <div class="card-header" style="background-color: #fff8e1;">
+              🔧 進行中
+            </div>
+            <div class="card-body p-0">
+              ${filtered.filter(a => a.status === '進行中').map(a => renderTicketCard(a)).join('')}
+              ${filtered.filter(a => a.status === '進行中').length === 0 ? '<div class="kanban-col-empty">無工單</div>' : ''}
+            </div>
+          </div>
+
+          <!-- 完成 -->
+          <div class="card kanban-col">
+            <div class="card-header" style="background-color: #e8f5e9;">
+              ✅ 完成
+            </div>
+            <div class="card-body p-0">
+              ${filtered.filter(a => a.status === '完成').map(a => renderTicketCard(a)).join('')}
+              ${filtered.filter(a => a.status === '完成').length === 0 ? '<div class="kanban-col-empty">無工單</div>' : ''}
+            </div>
+          </div>
+        </div>
+      `;
+    };
+
+    const renderTicketCard = function(alert) {
+      const levelBadge = {
+        crit: '🚨 緊急',
+        warn: '⚠️ 一般',
+        info: 'ℹ️ 資訊'
+      }[alert.level];
+
+      const levelColor = {
+        crit: '#C0392B',
+        warn: '#D35400',
+        info: '#008CD6'
+      }[alert.level];
+
+      return `
+        <div class="card" style="margin: 8px; border-left: 4px solid ${levelColor}; background: #fafafa;">
+          <div style="padding: 12px;">
+            <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 8px;">
+              <span style="font-weight: 600; color: #333;">${alert.ticketId}</span>
+              <span class="badge ${alert.level}" style="font-size: 11px;">${levelBadge}</span>
+            </div>
+            <p style="font-size: 12px; line-height: 1.4; margin-bottom: 8px; color: #555;">
+              ${alert.msg}
+            </p>
+            <div style="font-size: 11px; color: #999; margin-bottom: 6px;">
+              📍 ${alert.space}
+            </div>
+            <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 8px;">
+              <span><strong>指派：</strong> ${alert.assignee}</span>
+              <span><strong>優先：</strong> ${alert.priority}</span>
+            </div>
+            <div style="font-size: 11px; color: #666; margin-bottom: 8px;">
+              ⏰ ${FM.timeAgo(alert.time)}
+            </div>
+            <button class="btn btn-small btn-primary" style="width: 100%; font-size: 11px;" data-ticket-id="${alert.id}">
+              詳情
+            </button>
+          </div>
+        </div>
+      `;
+    };
+
+    /* ─────────────────────────────────────────────────────────────────────── */
+    /* 6. 人工確認關卡                                                        */
+    /* ─────────────────────────────────────────────────────────────────────── */
+
+    const renderConfirmPanel = function() {
+      const needsConfirm = getNeedsConfirm();
+
+      if (needsConfirm.length === 0) {
+        return `
+          <div class="card">
+            <div class="card-body text-center">
+              <div style="font-size: 48px; margin-bottom: 12px;">✅</div>
+              <p class="text-lg font-semibold">全部已確認</p>
+              <p class="text-sm text-muted">暫無需人工確認的高風險動作</p>
+            </div>
+          </div>
+        `;
+      }
+
+      return `
+        <div class="grid grid-cols-1 gap-4">
+          ${needsConfirm.map(a => {
+            const riskColor = {
+              '高': '#C0392B',
+              '中': '#D35400',
+              '低': '#1A7A4A'
+            }[a.riskLevel];
+
+            // 取得完整位置名稱，無法解析時返回簡化版本
+            const fullName = FM.spaces.getFullName(a.space) || a.space;
+
+            return `
+              <div class="card" style="border-left: 4px solid ${riskColor};">
+                <div class="card-body">
+                  <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px;">
+                    <div>
+                      <span style="font-weight: 600; font-size: 16px;">${a.ticketId}</span>
+                      <span class="badge ${a.level}" style="margin-left: 8px;">
+                        ${a.level === 'crit' ? '🚨 緊急' : a.level === 'warn' ? '⚠️ 一般' : 'ℹ️ 資訊'}
+                      </span>
+                    </div>
+                    <span style="background-color: ${riskColor}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">
+                      風險 ${a.riskLevel}
+                    </span>
+                  </div>
+
+                  <p style="margin-bottom: 8px; font-size: 14px;">${a.msg}</p>
+                  <p style="font-size: 12px; color: #666; margin-bottom: 8px;">
+                    📍 <span class="space-tag">${a.space}</span>
+                    <span style="margin-left: 8px; padding: 2px 6px; background: #f0f0f0; border-radius: 3px; font-size: 11px;">${fullName}</span>
+                  </p>
+
+                  <div style="background: #f5f5f5; padding: 8px; border-radius: 4px; margin-bottom: 12px; font-size: 13px;">
+                    <strong>AI 建議動作：</strong> ${a.aiAction}
+                  </div>
+
+                  <div style="background: #fef3cd; padding: 8px; border-radius: 4px; margin-bottom: 12px; font-size: 13px; border-left: 3px solid #D35400;">
+                    <strong>需確認的高風險動作：</strong> <span style="color: #C0392B;">${a.confirmAction}</span>
+                  </div>
+
+                  <button class="btn btn-success" style="width: 100%; padding: 10px;" data-confirm-id="${a.id}" data-action="${a.confirmAction}" data-ticket="${a.ticketId}">
+                    ✓ 確認 ${a.confirmAction} 動作
+                  </button>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
+    };
+
+    /* ─────────────────────────────────────────────────────────────────────── */
+    /* 7. 跨系統空間碼彙整                                                    */
+    /* ─────────────────────────────────────────────────────────────────────── */
+
+    const renderSpaceCodeSummary = function() {
+      const codeSummary = {};
+
+      // 分組統計
+      dedupAlerts.forEach(a => {
+        if (!codeSummary[a.space]) {
+          codeSummary[a.space] = {
+            code: a.space,
+            fullName: FM.spaces.getFullName(a.space),
+            alerts: [],
+            systems: new Set(),
+            maxLevel: 'info'
+          };
+        }
+        codeSummary[a.space].alerts.push(a);
+        codeSummary[a.space].systems.add(a.system);
+
+        // 更新最高優先級
+        if (a.level === 'crit' || (a.level === 'warn' && codeSummary[a.space].maxLevel !== 'crit')) {
+          codeSummary[a.space].maxLevel = a.level;
+        }
+      });
+
+      const sorted = Object.values(codeSummary).sort((a, b) => {
+        const levelOrder = { crit: 0, warn: 1, info: 2 };
+        return levelOrder[a.maxLevel] - levelOrder[b.maxLevel];
+      });
+
+      if (sorted.length === 0) {
+        return `<p class="text-muted">暫無告警</p>`;
+      }
+
+      return `
+        <table class="dtable">
+          <thead>
+            <tr>
+              <th>空間碼</th>
+              <th>位置名稱</th>
+              <th>涉及子系統</th>
+              <th>告警數</th>
+              <th>最高等級</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${sorted.map(item => `
+              <tr class="alert-row">
+                <td><span class="space-tag">${item.code}</span></td>
+                <td style="font-size: 12px;">${item.fullName}</td>
+                <td style="font-size: 12px;">
+                  ${Array.from(item.systems).map(sys => `<span class="badge info">${sys}</span>`).join(' ')}
+                </td>
+                <td style="text-align: center;">${item.alerts.length}</td>
+                <td>
+                  ${item.maxLevel === 'crit' ? '🚨 緊急' : item.maxLevel === 'warn' ? '⚠️ 一般' : 'ℹ️ 資訊'}
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    };
+
+    /* ─────────────────────────────────────────────────────────────────────── */
+    /* 8. 告警表格                                                            */
+    /* ─────────────────────────────────────────────────────────────────────── */
+
+    const renderAlertTable = function(alerts) {
+      if (alerts.length === 0) {
+        return `<p class="text-muted">暫無告警</p>`;
+      }
+
+      return `
+        <table class="dtable">
+          <thead>
+            <tr>
+              <th>告警 ID</th>
+              <th>等級</th>
+              <th>空間碼</th>
+              <th>子系統</th>
+              <th>訊息</th>
+              <th>AI 建議</th>
+              <th>工單 ID</th>
+              <th>時間</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${alerts.map((a, idx) => `
+              <tr class="alert-row">
+                <td><strong>${a.id}</strong></td>
+                <td><span class="badge ${a.level}">${a.level === 'crit' ? '🚨 緊急' : a.level === 'warn' ? '⚠️ 一般' : 'ℹ️ 資訊'}</span></td>
+                <td><span class="space-tag">${a.space}</span></td>
+                <td><span class="badge info">${a.system}</span></td>
+                <td style="font-size: 12px;">${a.msg}</td>
+                <td style="font-size: 12px;">
+                  <strong>${a.aiAction}</strong>
+                  ${a.needConfirm ? '<div style="color: #C0392B; font-weight: 600;">⚠️ 需確認</div>' : ''}
+                </td>
+                <td><strong>${a.ticketId || '-'}</strong></td>
+                <td style="font-size: 12px;">${FM.timeAgo(a.time)}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    };
+
+    /* ─────────────────────────────────────────────────────────────────────── */
+    /* 9. 事件監聽器與互動邏輯（事件委派）                                      */
+    /* ─────────────────────────────────────────────────────────────────────── */
+
+    window.showTicketDetail = function(alertId) {
+      const alert = FM.alerts.find(a => a.id === alertId);
+      if (!alert) return;
+
+      const fullName = FM.spaces.getFullName(alert.space) || alert.space;
+
+      const content = `
+        <table style="width: 100%; font-size: 13px;">
+          <tr><td style="font-weight: 600; width: 120px;">工單 ID:</td><td>${alert.ticketId}</td></tr>
+          <tr><td style="font-weight: 600;">告警 ID:</td><td>${alert.id}</td></tr>
+          <tr><td style="font-weight: 600;">等級:</td><td><span class="badge ${alert.level}">${alert.level}</span></td></tr>
+          <tr><td style="font-weight: 600;">空間碼:</td><td><span class="space-tag">${alert.space}</span></td></tr>
+          <tr><td style="font-weight: 600;">完整位置:</td><td>${fullName}</td></tr>
+          <tr><td style="font-weight: 600;">子系統:</td><td><span class="badge info">${alert.system}</span></td></tr>
+          <tr><td style="font-weight: 600;">訊息:</td><td>${alert.msg}</td></tr>
+          <tr><td style="font-weight: 600;">AI 建議:</td><td>${alert.aiAction}</td></tr>
+          <tr><td style="font-weight: 600;">工單狀態:</td><td>${alert.status}</td></tr>
+          <tr><td style="font-weight: 600;">指派人員:</td><td>${alert.assignee}</td></tr>
+          <tr><td style="font-weight: 600;">優先等級:</td><td>${alert.priority}</td></tr>
+          <tr><td style="font-weight: 600;">時間:</td><td>${FM.timeAgo(alert.time)}</td></tr>
+        </table>
+      `;
+
+      FM.showModal(`工單詳情: ${alert.ticketId}`, content, [
+        { label: '關閉', type: 'secondary', onclick: 'FM.closeModal()' }
+      ]);
+    };
+
+    window.confirmAction = function(alertId, action, ticketId) {
+      FM.confirmAlert(alertId);
+      FM.showModal('確認成功', `
+        <p style="margin: 16px 0;">
+          已確認 <strong>${action}</strong> 動作
+        </p>
+        <p style="color: #999; font-size: 12px;">
+          工單: ${ticketId} 已更新
+        </p>
+      `, [
+        { label: '關閉', type: 'primary', onclick: 'FM.closeModal(); window.location.reload();' }
+      ]);
+    };
+
+    const attachEventListeners = function() {
+      // Tab 切換事件委派
+      const tabContainer = document.getElementById('dispatch-tabs');
+      if (tabContainer) {
+        tabContainer.addEventListener('click', (e) => {
+          if (e.target.classList.contains('tab-btn')) {
+            const tabName = e.target.dataset.tab;
+            activeTab = tabName;
+
+            // 更新 Tab 按鈕狀態
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+              btn.classList.toggle('active', btn.dataset.tab === tabName);
+            });
+
+            // 更新 Tab 內容顯示
+            document.querySelectorAll('.tab-content').forEach(content => {
+              content.classList.toggle('active', content.id === `tab-${tabName}`);
+            });
+          }
+        });
+      }
+
+      // 過濾器事件委派：狀態與等級
+      document.addEventListener('change', (e) => {
+        if (e.target.dataset.filter === 'status' || e.target.dataset.filter === 'level') {
+          filterStatus = document.querySelector('input[name="status-filter"]:checked')?.value || 'all';
+          filterLevel = document.querySelector('input[name="level-filter"]:checked')?.value || 'all';
+          renderDispatchPage();
+        }
+      });
+
+      // 工單詳情按鈕事件委派
+      document.addEventListener('click', (e) => {
+        if (e.target.dataset.ticketId) {
+          e.preventDefault();
+          showTicketDetail(e.target.dataset.ticketId);
+        }
+      });
+
+      // 人工確認按鈕事件委派
+      document.addEventListener('click', (e) => {
+        if (e.target.dataset.confirmId) {
+          e.preventDefault();
+          confirmAction(e.target.dataset.confirmId, e.target.dataset.action, e.target.dataset.ticket);
+        }
+      });
+    };
+
+    /* ─────────────────────────────────────────────────────────────────────── */
+    /* 10. 頁面初始化                                                         */
+    /* ─────────────────────────────────────────────────────────────────────── */
+
+    renderDispatchPage();
+
+  </script>
+</body>
+</html>
