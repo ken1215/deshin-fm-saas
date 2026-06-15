@@ -55,6 +55,9 @@
   </div>
 
   <script src="../assets/app.js"></script>
+  <script src="../assets/fm-events.js"></script>
+  <script src="../assets/fm-tickets.js"></script>
+  <script src="../assets/fm-workflow.js"></script>
   <script>
     /* ========================================================================
        資產保固/法定申報模組 (asset.html)
@@ -527,6 +530,51 @@
     }
 
     // ───────────────────────────────────────────────────────────────────────
+    // 7. 維修履歷分頁
+    // ───────────────────────────────────────────────────────────────────────
+    function renderAssetHistory() {
+      let html = '';
+      const historyList = (FM.assetHistory && FM.assetHistory.list) ? FM.assetHistory.list() : [];
+
+      if (historyList.length === 0) {
+        html += `
+          <div class="card">
+            <div class="card-body text-center" style="padding: 60px 20px;">
+              <div style="font-size: 48px; margin-bottom: 12px; color: #ccc;">📝</div>
+              <p style="color: #999; font-size: 14px;">尚無履歷紀錄</p>
+            </div>
+          </div>
+        `;
+        return html;
+      }
+
+      html += '<div class="card">';
+      html += '<div class="card-header"><h3>維修履歷</h3></div>';
+      html += '<div class="card-body">';
+
+      const columns = ['時間', '工單', '空間', '系統', '事項', '承辦', '簽核人'];
+      const rows = [];
+
+      historyList.forEach(rec => {
+        const time = rec.time ? new Date(rec.time).toLocaleString('zh-TW') : '未記錄';
+        rows.push([
+          time,
+          rec.ticketId || '—',
+          rec.space || '—',
+          rec.system || '—',
+          rec.msg || '—',
+          rec.team || rec.assignee || '—',
+          rec.signedBy || '—'
+        ]);
+      });
+
+      html += FM.createTable(columns, rows, { alertRows: [] });
+      html += '</div></div>';
+
+      return html;
+    }
+
+    // ───────────────────────────────────────────────────────────────────────
     // 8. 主渲染函式
     // ───────────────────────────────────────────────────────────────────────
     function renderContent() {
@@ -547,6 +595,10 @@
                   onclick="switchTab('compliance')">
             📋 法定申報行事曆
           </button>
+          <button class="tab-btn ${currentTab === 'history' ? 'active' : ''}"
+                  onclick="switchTab('history')">
+            🛠️ 維修履歷
+          </button>
         </div>
       `;
 
@@ -557,6 +609,8 @@
         html += renderWarrantyReminders();
       } else if (currentTab === 'compliance') {
         html += renderLegalCompliance();
+      } else if (currentTab === 'history') {
+        html += renderAssetHistory();
       }
 
       FM.loadContent(html);
@@ -565,5 +619,5 @@
     // 初始渲染
     renderContent();
   </script>
-</body>
+  </body>
 </html>

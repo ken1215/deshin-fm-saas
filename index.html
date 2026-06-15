@@ -74,6 +74,10 @@
     @media (max-width:860px){ .war-kpi-band{ grid-template-columns:repeat(2,1fr); } }
   </style>
   <script src="assets/app.js"></script>
+  <script src="assets/fm-events.js"></script>
+  <script src="assets/fm-tickets.js"></script>
+  <script src="assets/fm-workflow.js"></script>
+  <script src="assets/fm-sop.js"></script>
 </head>
 <body>
   <script>
@@ -125,6 +129,7 @@
           <button class="war-layer-btn active" data-layer="air" onclick="pickLayer('air')">空品</button>
           <button class="war-layer-btn" data-layer="util" onclick="pickLayer('util')">稼動率</button>
           <button class="war-layer-btn" data-layer="temp" onclick="pickLayer('temp')">溫度</button>
+          <button class="war-layer-btn" data-layer="lighting" onclick="pickLayer('lighting')">照明</button>
           <button class="war-layer-btn" data-layer="alert" onclick="pickLayer('alert')">告警</button>
           <button class="war-layer-btn" data-layer="people" onclick="pickLayer('people')">人流</button>
           <button id="layer-rotate-btn" class="war-rotate-btn" onclick="toggleRotate()">▶ 自動輪播</button>
@@ -264,6 +269,31 @@
       </div>
     `;
 
+    /* 1a. 進行中緊急事件橫幅（SOP 模組） */
+    if (FM.sopIncidents && FM.sopIncidents.active && FM.sopIncidents.active().length > 0) {
+      const activeIncidents = FM.sopIncidents.active();
+      contentHtml += `
+        <div style="margin: 20px 0; padding: 15px; background: #C0392B; color: #fff; border-radius: 8px; border-left: 4px solid #C0392B;">
+          <div style="font-weight: bold; margin-bottom: 10px; font-size: 16px;">🚨 進行中緊急事件</div>
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px;">
+      `;
+      activeIncidents.forEach(incident => {
+        const incidentNum = incident.id || 'N/A';
+        const incidentTitle = incident.title || incident.name || '未命名事件';
+        const incidentStatus = incident.status || '進行中';
+        contentHtml += `
+            <div style="padding: 10px; background: rgba(255,255,255,0.1); border-radius: 6px; cursor: pointer;" onclick="location.href='modules/sop.html'">
+              <div style="font-weight: bold;">#${incidentNum} ${incidentTitle}</div>
+              <div style="font-size: 12px; margin-top: 5px;">狀態：${incidentStatus}</div>
+            </div>
+        `;
+      });
+      contentHtml += `
+          </div>
+        </div>
+      `;
+    }
+
     /* 2. 子系統狀態總覽（11個卡片） */
     contentHtml += `
       <div class="section-title">全系統狀態總覽</div>
@@ -271,8 +301,10 @@
     `;
 
     // 遍歷所有子系統生成卡片
-    const subsystemOrder = ['PWR', 'HVAC', 'AIR', 'FIRE', 'WTR', 'AST', 'SUP', 'ACC', 'SCH', 'DSP', 'CCTV', 'SEC', 'STF', 'RPT', 'VND'];
-    const codeToFile = { PWR:'power', HVAC:'hvac', AIR:'air', FIRE:'fire', WTR:'water', AST:'asset', SUP:'supplies', ACC:'access', CLN:'access', SCH:'scheduling', DSP:'dispatch', CCTV:'cctv', SEC:'security', STF:'staff', RPT:'report', VND:'vendor' };
+    /* 注意：subsystemOrder 只放 FM.spaces.subsystems / systemStats 有資料的大寫子系統碼；
+       管理工具（workflow/hermes/line）走下方獨立區塊，混入此陣列會使渲染 TypeError 全白 */
+    const subsystemOrder = ['PWR', 'HVAC', 'AIR', 'FIRE', 'WTR', 'LGT', 'AST', 'SUP', 'ACC', 'SCH', 'DSP', 'CCTV', 'SEC', 'STF', 'RPT', 'VND'];
+    const codeToFile = { PWR:'power', HVAC:'hvac', AIR:'air', FIRE:'fire', WTR:'water', LGT:'lighting', AST:'asset', SUP:'supplies', ACC:'access', CLN:'access', SCH:'scheduling', DSP:'dispatch', CCTV:'cctv', SEC:'security', STF:'staff', RPT:'report', VND:'vendor' };
     subsystemOrder.forEach(subsys => {
       const sys = FM.spaces.subsystems[subsys];
       const stats = FM.mockData.systemStats[subsys];
@@ -304,6 +336,28 @@
       `;
     });
 
+    contentHtml += `</div>`;
+
+    /* 2b. 管理工具入口（非子系統，無稼動率資料，獨立渲染） */
+    contentHtml += `<div class="section-title">管理工具</div><div class="grid grid-cols-4" style="margin-bottom: 20px;">`;
+    [
+      { key: 'layout', name: '現況佈局檢視', icon: '🗺️', desc: '7F 平面設備點位即時狀態' },
+      { key: 'workflow', name: '閉環工單中心', icon: '🔁', desc: '維修閉環：AI 派工＋人工簽核' },
+      { key: 'hermes', name: 'Hermes AI 助理', icon: '🤖', desc: 'AI 研判、推播與待研判佇列' },
+      { key: 'line', name: 'LINE 推播中心', icon: '💬', desc: '群組推播規則與紀錄' },
+      { key: 'sop', name: '緊急狀況 SOP', icon: '🚨', desc: '應變作業指引＋一鍵通報事件紀錄' },
+    ].forEach(tool => {
+      contentHtml += `
+        <div class="card" onclick="location.href='modules/${tool.key}.html'" style="cursor: pointer;">
+          <div class="card-body" style="display: flex; align-items: center; gap: 12px;">
+            <div style="font-size: 28px;">${tool.icon}</div>
+            <div>
+              <div style="font-weight: bold; font-size: 14px;">${tool.name}</div>
+              <div style="font-size: 12px; color: #666;">${tool.desc}</div>
+            </div>
+          </div>
+        </div>`;
+    });
     contentHtml += `</div>`;
 
     /* 3. 即時告警動態流（Tab切換：緊急/一般/資訊） */

@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>緊急狀況 SOP 應變中心 — 德新行政管理平台</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+  <div id="fm-shell"></div>
+  <div id="fm-content"></div>
+
+  <script src="../assets/app.js"></script>
+  <script src="../assets/fm-events.js"></script>
+  <script src="../assets/fm-tickets.js"></script>
+  <script src="../assets/fm-workflow.js"></script>
+  <script src="../assets/fm-sop.js"></script>
+
+  <script>
+    /* ========================================================================
+       緊急狀況 SOP 應變中心
+       ======================================================================== */
+    FM.renderShell('sop', '緊急狀況 SOP 應變中心');
+
+    // 初始化
+    let activeTab = 'security';
+
+    function render() {
+      const incidents = FM.sopIncidents.list();
+      const active = FM.sopIncidents.active();
+      const today = new Date().toLocaleDateString('zh-TW');
+
+      // 統計今日啟動次數
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const todayCount = incidents.filter(inc => inc.startedAt >= todayStart.getTime()).length;
+
+      // KPI 統計
+      let h = `
+        <div class="grid grid-cols-4 gap-3 mb-4">
+          <div class="kpi ${active.length > 0 ? 'warning' : 'success'}">
+            <div class="kpi-icon">⚠️</div>
+            <div class="kpi-value">${active.length}</div>
+            <div class="kpi-unit">件</div>
+            <div class="kpi-label">進行中事件</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-icon">📅</div>
+            <div class="kpi-value">${todayCount}</div>
+            <div class="kpi-unit">次</div>
+            <div class="kpi-label">今日啟動</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-icon">📚</div>
+            <div class="kpi-value">${FM.sopLibrary.length}</div>
+            <div class="kpi-unit">條</div>
+            <div class="kpi-label">SOP 總數</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-icon">✓</div>
+            <div class="kpi-value">${FM.dutyChecklists().length}</div>
+            <div class="kpi-unit">項</div>
+            <div class="kpi-label">值勤例行</div>
+          </div>
+        </div>
+      `;
+
+      // 分頁標籤
+      h += `
+        <div class="card mb-4">
+          <div class="card-header">
+            <div style="display:flex;gap:8px;border-bottom:2px solid #f5f5f5;flex-wrap:wrap;">
+              <button class="tab-btn ${activeTab === 'security' ? 'active' : ''}" onclick="switchTab('security')">🛡️ 安全類</button>
+              <button class="tab-btn ${activeTab === 'medical' ? 'active' : ''}" onclick="switchTab('medical')">🫀 醫療類</button>
+              <button class="tab-btn ${activeTab === 'facility' ? 'active' : ''}" onclick="switchTab('facility')">🔥 設施災害類</button>
+              <button class="tab-btn ${activeTab === 'duty' ? 'active' : ''}" onclick="switchTab('duty')">📋 值勤例行</button>
+              <button class="tab-btn ${activeTab === 'tracking' ? 'active' : ''}" onclick="switchTab('tracking')">🚨 事件追蹤</button>
+            </div>
+          </div>
+          <div class="card-body">${renderTab()}</div>
+        </div>
+      `;
+
+      FM.loadContent(h);
+    }
+
+    function switchTab(tab) {
+      activeTab = tab;
+      render();
+    }
+
+    function renderTab() {
+      if (activeTab === 'tracking') return renderTracking();
+      if (activeTab === 'duty') return renderDuty();
+
+      // 安全類、醫療類、設施災害類：展示卡片
+      const sopList = FM.sopLibrary.filter(sop => sop.category === activeTab);
+      let h = '<div class="grid grid-cols-2 gap-3">';
+
+      sopList.forEach(sop => {
+        const escapeHtml = (str) => {
+          const d = document.createElement('div');
+          d.textContent = str;
+          return d.innerHTML;
+        };
+
+        // 通報對象標籤
+        let notifyHtml = '';
+        (sop.notify || []).forEach(group => {
+          let label = group;
+          let color = '#666';
+          if (group === 'mgr') { label = '主管群'; color = '#0054A7'; }
+          else if (group === 'eng') { label = '工務群'; color = '#D35400'; }
+          else if (group === 'nur') { label = '護理站'; color = '#A23B72'; }
+          else if (group === 'unit') { label = '使用單位'; color = '#1A7A4A'; }
+          else if (group === '110') { label = '110 報警'; color = '#C0392B'; }
+          else if (group === '119') { label = '119 急救'; color = '#E8730C'; }
+          else if (group === 'sec') { label = '保全'; color = '#7B6079'; }
+          else if (group === '全院廣播') { label = '全院廣播'; color = '#F18F01'; }
+          notifyHtml += `<span class="badge" style="background:${color}20;border-left:3px solid ${color};color:${color};">${escapeHtml(label)}</span> `;
+        });
+
+        // 步驟清單
+        let stepsHtml = '<ol style="margin:12px 0;padding-left:24px;line-height:1.8;">';
+        (sop.steps || []).forEach(step => {
+          stepsHtml += `<li>${escapeHtml(step)}</li>`;
+        });
+        stepsHtml += '</ol>';
+
+        // 連動子系統徽章
+        let linkHtml = '';
+        if (sop.link) {
+          const subsys = FM.spaces.subsystems[sop.link];
+          if (subsys) {
+            linkHtml = `<a href="../modules/${sop.link.toLowerCase()}.html" style="display:inline-block;margin-right:6px;text-decoration:none;">
+              <span class="badge" style="background:${subsys.color}20;border-left:3px solid ${subsys.color};cursor:pointer;">${escapeHtml(subsys.name)}</span>
+            </a>`;
+          }
+        }
+
+        h += `
+          <div class="card" style="border-left:4px solid ${sop.icon === '🔥' ? '#C0392B' : sop.icon === '🫀' ? '#A23B72' : '#7B6079'};">
+            <div class="card-header">
+              <div style="display:flex;justify-content:space-between;align-items:start;">
+                <div>
+                  <div style="font-size:24px;margin-bottom:6px;">${sop.icon}</div>
+                  <div class="font-semibold">${escapeHtml(sop.title)}</div>
+                  <div class="text-xs text-muted" style="margin-top:4px;">${escapeHtml(sop.id)}</div>
+                </div>
+              </div>
+            </div>
+            <div class="card-body" style="font-size:13px;">
+              <div style="margin-bottom:12px;"><strong>流程步驟：</strong>${stepsHtml}</div>
+              <div style="margin-bottom:12px;"><strong>通報對象：</strong><div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px;">${notifyHtml}</div></div>
+              <div style="margin-bottom:12px;background:#fff3cd;border-left:3px solid #F39C12;padding:10px;border-radius:4px;">
+                <strong style="color:#E67E22;">⚠️ 注意：</strong> ${escapeHtml(sop.cautions)}
+              </div>
+              ${linkHtml ? `<div style="margin-bottom:12px;"><strong>連動：</strong> ${linkHtml}</div>` : ''}
+              <button class="btn btn-primary" style="width:100%;" onclick="activateSop('${escapeHtml(sop.id)}')">🚨 啟動應變</button>
+            </div>
+          </div>
+        `;
+      });
+
+      h += '</div>';
+      return h;
+    }
+
+    function renderDuty() {
+      const checklists = FM.dutyChecklists();
+      let h = '<div class="grid grid-cols-2 gap-3">';
+
+      checklists.forEach(sop => {
+        const escapeHtml = (str) => {
+          const d = document.createElement('div');
+          d.textContent = str;
+          return d.innerHTML;
+        };
+
+        const storageKey = 'fm_duty_' + sop.id + '_' + new Date().toLocaleDateString('zh-TW');
+        const savedState = JSON.parse(localStorage.getItem(storageKey) || '[]');
+
+        let stepsHtml = '<div style="margin:12px 0;">';
+        (sop.steps || []).forEach((step, idx) => {
+          const isChecked = savedState[idx] ? 'checked' : '';
+          stepsHtml += `
+            <div style="margin:8px 0;display:flex;align-items:center;">
+              <input type="checkbox" ${isChecked} onchange="updateDutyCheckbox('${sop.id}', ${idx})"
+                style="margin-right:8px;width:16px;height:16px;cursor:pointer;">
+              <span style="flex:1;">${escapeHtml(step)}</span>
+            </div>
+          `;
+        });
+        stepsHtml += '</div>';
+
+        h += `
+          <div class="card" style="border-left:4px solid #1A7A4A;">
+            <div class="card-header">
+              <div style="font-size:24px;margin-bottom:6px;">${sop.icon}</div>
+              <div class="font-semibold">${escapeHtml(sop.title)}</div>
+              <div class="text-xs text-muted" style="margin-top:4px;">${escapeHtml(sop.id)}</div>
+            </div>
+            <div class="card-body" style="font-size:13px;">
+              <div><strong>檢查項目：</strong>${stepsHtml}</div>
+              <div style="background:#e8f5e9;border-left:3px solid #00A94F;padding:10px;border-radius:4px;">
+                <strong style="color:#1A7A4A;">ℹ️</strong> ${escapeHtml(sop.cautions)}
+              </div>
+            </div>
+          </div>
+        `;
+      });
+
+      h += '</div>';
+      return h;
+    }
+
+    function renderTracking() {
+      const incidents = FM.sopIncidents.list();
+      const escapeHtml = (str) => {
+        const d = document.createElement('div');
+        d.textContent = str;
+        return d.innerHTML;
+      };
+
+      if (incidents.length === 0) {
+        return '<div style="text-align:center;padding:32px;color:#999;">尚無事件紀錄</div>';
+      }
+
+      let h = '<table class="dtable"><thead><tr><th>事件號</th><th>SOP</th><th>類別</th><th>狀態</th><th>啟動時間</th><th>處理人</th><th>操作</th></tr></thead><tbody>';
+
+      incidents.forEach(inc => {
+        const sop = FM.sopLibrary.find(s => s.id === inc.sopId);
+        const category = sop ? sop.category : '—';
+        const categoryLabel = {
+          'security': '安全',
+          'medical': '醫療',
+          'facility': '設施',
+          'duty': '值勤'
+        }[category] || category;
+
+        const statusColor = inc.status === '啟動中' ? '#F39C12' : inc.status === '處理中' ? '#008CD6' : inc.status === '已解除' ? '#1A7A4A' : '#999';
+        const timeStr = new Date(inc.startedAt).toLocaleString('zh-TW');
+
+        h += `
+          <tr style="cursor:pointer;" onclick="toggleIncidentLog('${inc.id}')">
+            <td class="font-semibold text-sm">${escapeHtml(inc.id)}</td>
+            <td class="text-sm">${escapeHtml(inc.title)}</td>
+            <td class="text-sm">${escapeHtml(categoryLabel)}</td>
+            <td><span class="badge" style="background:${statusColor}20;border-left:3px solid ${statusColor};color:${statusColor};">${escapeHtml(inc.status)}</span></td>
+            <td class="text-sm text-muted">${escapeHtml(timeStr)}</td>
+            <td class="text-sm">${escapeHtml(inc.handler)}</td>
+            <td>
+              ${inc.status === '啟動中' ? `
+                <button class="btn btn-small" onclick="updateIncidentStatus('${inc.id}', '處理中', event)">進行中</button>
+                <button class="btn btn-small" onclick="updateIncidentStatus('${inc.id}', '已解除', event)">解除</button>
+              ` : inc.status === '處理中' ? `
+                <button class="btn btn-small" onclick="updateIncidentStatus('${inc.id}', '已解除', event)">解除</button>
+                <button class="btn btn-small" onclick="updateIncidentStatus('${inc.id}', '結案', event)">結案</button>
+              ` : inc.status === '已解除' ? `
+                <button class="btn btn-small" onclick="updateIncidentStatus('${inc.id}', '結案', event)">結案</button>
+              ` : '—'}
+            </td>
+          </tr>
+          <tr id="log-${inc.id}" style="display:none;">
+            <td colspan="7" style="padding:16px;background:#f9f9f9;">
+              <div><strong>事件時間軸：</strong></div>
+              <div style="margin-top:10px;border-left:2px solid #ddd;padding-left:16px;">
+                ${(inc.log || []).map(entry => {
+                  const logTime = new Date(entry.time).toLocaleString('zh-TW');
+                  return `<div style="margin:8px 0;"><div style="font-size:12px;color:#999;">${escapeHtml(logTime)} | ${escapeHtml(entry.actor)}</div><div style="color:#333;">${escapeHtml(entry.action)}</div></div>`;
+                }).join('')}
+              </div>
+            </td>
+          </tr>
+        `;
+      });
+
+      h += '</tbody></table>';
+      return h;
+    }
+
+    function activateSop(sopId) {
+      const sop = FM.sopLibrary.find(s => s.id === sopId);
+      if (!sop) return;
+
+      const msg = `確認啟動 <strong>${escapeHtml(sop.title)}</strong> 應變嗎？\n\n將立即通報相關單位並記錄事件。`;
+      FM.showConfirmDialog(
+        '啟動應變確認',
+        msg,
+        function() {
+          const inc = FM.sopIncidents.activate(sopId, '值班主管');
+          if (!inc) { FM.toast('SOP 不存在', 'warn'); return; }
+
+          // 構建通報提示
+          const notifyText = (sop.notify || []).map(g => {
+            if (g === '110') return '110 報警';
+            if (g === '119') return '119 急救';
+            if (g === '全院廣播') return '全院廣播';
+            const group = FM.lineGroups.find(lg => lg.key === g);
+            return group ? group.name : g;
+          }).join(' / ');
+
+          const steps = (sop.steps || []).slice(0, 3).map((s, i) => `${i+1}. ${s}`).join('\n');
+
+          const modalContent = `
+            <div style="margin:16px 0;">
+              <div style="background:#e8f5e9;border-left:3px solid #00A94F;padding:12px;border-radius:4px;margin-bottom:12px;">
+                <strong style="color:#1A7A4A;">✓ 應變已啟動</strong>
+                <div class="text-sm" style="margin-top:6px;color:#333;">事件號：${escapeHtml(inc.id)}</div>
+              </div>
+              <div style="margin-bottom:12px;">
+                <strong>通報對象：</strong><div style="margin-top:6px;color:#333;">${escapeHtml(notifyText)}</div>
+              </div>
+              <div>
+                <strong>前三步驟：</strong><div style="margin-top:6px;color:#333;white-space:pre-wrap;">${escapeHtml(steps)}</div>
+              </div>
+            </div>
+          `;
+
+          FM.showModal('應變啟動成功', modalContent, [
+            {
+              label: '關閉',
+              type: 'primary',
+              onclick: 'FM.closeModal(); render();'
+            }
+          ]);
+        }
+      );
+
+      function escapeHtml(str) {
+        const d = document.createElement('div');
+        d.textContent = str;
+        return d.innerHTML;
+      }
+    }
+
+    function updateDutyCheckbox(sopId, stepIdx) {
+      const storageKey = 'fm_duty_' + sopId + '_' + new Date().toLocaleDateString('zh-TW');
+      const savedState = JSON.parse(localStorage.getItem(storageKey) || '[]');
+
+      const checkbox = event.target;
+      savedState[stepIdx] = checkbox.checked;
+
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(savedState));
+      } catch (e) {
+        console.warn('localStorage 寫入失敗', e);
+      }
+    }
+
+    function toggleIncidentLog(incId) {
+      const logEl = document.getElementById('log-' + incId);
+      if (logEl) {
+        logEl.style.display = logEl.style.display === 'none' ? 'table-row' : 'none';
+      }
+    }
+
+    function updateIncidentStatus(incId, newStatus, event) {
+      event.stopPropagation();
+
+      if (newStatus === '結案') {
+        const note = prompt('請輸入結案備註：', '');
+        if (note === null) return;
+        FM.sopIncidents.resolve(incId, '值班主管', note);
+      } else {
+        FM.sopIncidents.update(incId, { status: newStatus }, { action: newStatus });
+      }
+
+      FM.toast('事件已更新為：' + newStatus, 'ok');
+      render();
+    }
+
+    // 初始渲染
+    render();
+  </script>
+</body>
+</html>

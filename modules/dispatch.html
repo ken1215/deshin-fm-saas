@@ -71,6 +71,9 @@
 </head>
 <body>
   <script src="../assets/app.js"></script>
+  <script src="../assets/fm-events.js"></script>
+  <script src="../assets/fm-tickets.js"></script>
+  <script src="../assets/fm-workflow.js"></script>
   <script>
     /* =====================================================================
        AI Agent 報修派工中控 (dispatch.html)
@@ -91,7 +94,7 @@
 
     // 在現有 FM.alerts 基礎上加入派工狀態與人工確認
     FM.alerts.forEach((alert, idx) => {
-      if (!alert.ticketId) {
+      if (!alert.ticketId && !alert.wfTicketId) {
         alert.ticketId = `TK-${String(2601 + idx).padStart(4, '0')}`;
         alert.status = ['待指派', '進行中', '完成'][Math.floor(Math.random() * 3)];
         alert.priority = alert.level === 'crit' ? '高' : alert.level === 'warn' ? '中' : '低';
@@ -101,17 +104,15 @@
       }
     });
 
-    // 去重邏輯：同一空間碼，只保留最嚴重級別的告警
-    // （防止同一空間多筆告警在派工時被重複計算）
+    // 去重邏輯：同一空間碼，只保留最嚴重級別的告警（跳過已由 workflow 接管的告警）
     const deduplicateAlerts = function() {
       const seen = {};
       const levelOrder = { crit: 0, warn: 1, info: 2 };
-      FM.alerts.forEach(a => {
-        const key = a.space;  // 僅以空間碼為去重 key
+      FM.alerts.filter(a => !a.wfTicketId).forEach(a => {
+        const key = a.space;
         if (!seen[key]) {
           seen[key] = a;
         } else {
-          // 保留優先級更高的告警（級別順序：crit < warn < info）
           if (levelOrder[a.level] < levelOrder[seen[key].level]) {
             seen[key] = a;
           }
@@ -122,6 +123,34 @@
 
     const dedupAlerts = deduplicateAlerts();
 
+    // 將 FM.ticketStore.active() 映射為看板項目（workflow 工單）
+    const mapTicketToAlert = function(t) {
+      const statusMap = {
+        'pending-dispatch': '待指派',
+        'dispatched': '待指派',
+        'in-progress': '進行中',
+        'done-pending-signoff': '完成待驗收',
+        'manual': '人工處理'
+      };
+      return {
+        id: 'WF-' + t.id,
+        wfTicketId: t.id,
+        space: t.space || '',
+        system: t.system || '',
+        msg: t.msg || '（無描述）',
+        level: t.level || 'info',
+        status: statusMap[t.status] || '未知',
+        priority: t.highRisk ? '高' : '中',
+        assignee: t.assignee || '未指派',
+        ticketId: t.id,
+        isWorkflow: true,
+        badge: '🔁 閉環'
+      };
+    };
+
+    const workflowItems = (FM.ticketStore && FM.ticketStore.active) ? FM.ticketStore.active().map(mapTicketToAlert) : [];
+    const allAlerts = dedupAlerts.concat(workflowItems);
+
     /* ─────────────────────────────────────────────────────────────────────── */
     /* 2. 統計與過濾狀態                                                      */
     /* ─────────────────────────────────────────────────────────────────────── */
@@ -131,7 +160,7 @@
     let filterLevel = 'all';  // 'all' | 'crit' | 'warn' | 'info'
 
     const getFilteredAlerts = () => {
-      let result = dedupAlerts;
+      let result = allAlerts;
       if (filterStatus !== 'all') {
         result = result.filter(a => a.status === filterStatus);
       }
@@ -652,8 +681,20 @@
     /* ─────────────────────────────────────────────────────────────────────── */
 
     window.showTicketDetail = function(alertId) {
-      const alert = FM.alerts.find(a => a.id === alertId);
+      const alert = allAlerts.find(a => a.id === alertId);
       if (!alert) return;
+
+      // 檢查是否為 workflow 工單
+      if (alert.isWorkflow) {
+        FM.showModal(`工單詳情: ${alert.ticketId}`,
+          `<p style="text-align: center; font-size: 14px; color: #666;">此工單由維修閉環系統管理。</p>`,
+          [
+            { label: '前往工單中心', type: 'primary', onclick: 'window.location.href = "workflow.html"' },
+            { label: '關閉', type: 'secondary', onclick: 'FM.closeModal()' }
+          ]
+        );
+        return;
+      }
 
       const fullName = FM.spaces.getFullName(alert.space) || alert.space;
 
@@ -748,5 +789,5 @@
     renderDispatchPage();
 
   </script>
-</body>
+  </body>
 </html>

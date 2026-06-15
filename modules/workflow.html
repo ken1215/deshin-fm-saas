@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agentic 閉環工單中心 — 德新行政管理平台</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+  <div id="fm-shell"></div>
+  <div id="fm-content"></div>
+
+  <script src="../assets/app.js"></script>
+  <script src="../assets/fm-events.js"></script>
+  <script src="../assets/fm-tickets.js"></script>
+  <script src="../assets/fm-workflow.js"></script>
+  <script>
+    // ========================================================================
+    // Workflow 閉環工單中心（看板 / 人工佇列 / Audit Timeline / 模擬觸發）
+    // ========================================================================
+    FM.renderShell('workflow', 'Agentic 閉環工單中心');
+
+    let activeTab = 'kanban';
+
+    function esc(s) {
+      return String(s).replace(/[&<>"']/g, function (c) {
+        const m = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+        return m[c];
+      });
+    }
+
+    function switchTab(t) {
+      activeTab = t;
+      render();
+    }
+
+    function render() {
+      const q = FM.workflow.queues();
+      const all = FM.ticketStore.list();
+      const active = FM.ticketStore.active();
+      const closed = all.filter(t => t.status === 'closed').slice(0, 10);
+      const paused = FM.workflow.isPaused();
+
+      const pendingCount = q.dispatch.length;
+      const inProgressCount = active.filter(t => t.status === 'dispatched' || t.status === 'in-progress').length;
+      const signoffCount = q.signoff.length;
+      const closedCount = closed.length;
+      const errorCount = q.error.length;
+
+      let h = `
+        <div class="grid grid-cols-5 gap-3 mb-4">
+          <div class="kpi"><div class="kpi-icon">🧑‍⚖️</div><div class="kpi-value">${pendingCount}</div><div class="kpi-unit">件</div><div class="kpi-label">待派工核可</div></div>
+          <div class="kpi"><div class="kpi-icon">🔧</div><div class="kpi-value">${inProgressCount}</div><div class="kpi-unit">件</div><div class="kpi-label">進行中</div></div>
+          <div class="kpi"><div class="kpi-icon">📝</div><div class="kpi-value">${signoffCount}</div><div class="kpi-unit">件</div><div class="kpi-label">待簽核</div></div>
+          <div class="kpi"><div class="kpi-icon">✅</div><div class="kpi-value">${closedCount}</div><div class="kpi-unit">件</div><div class="kpi-label">今日結案</div></div>
+          <div class="kpi ${errorCount?'danger':'success'}"><div class="kpi-icon">⚠️</div><div class="kpi-value">${errorCount}</div><div class="kpi-unit">件</div><div class="kpi-label">錯誤待處理</div></div>
+        </div>
+        <div class="card mb-4">
+          <div class="card-header">
+            <div style="display:flex;gap:8px;justify-content:space-between;align-items:center;flex-wrap:wrap;border-bottom:2px solid #f5f5f5;padding-bottom:8px;">
+              <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <button class="tab-btn ${activeTab==='kanban'?'active':''}" onclick="switchTab('kanban')">🔁 閉環看板</button>
+                <button class="tab-btn ${activeTab==='queue'?'active':''}" onclick="switchTab('queue')">🧑‍⚖️ 人工佇列</button>
+                <button class="tab-btn ${activeTab==='timeline'?'active':''}" onclick="switchTab('timeline')">📜 Audit Timeline</button>
+                <button class="tab-btn ${activeTab==='sim'?'active':''}" onclick="switchTab('sim')">🧪 模擬觸發</button>
+              </div>
+              <button class="btn ${paused?'warn':'ok'}" onclick="FM.workflow.setPaused(!FM.workflow.isPaused()); render();">
+                ${paused?'⏸ 已暫停':'▶ 運行中'}
+              </button>
+            </div>
+          </div>
+          <div class="card-body">${content()}</div>
+        </div>`;
+
+      FM.loadContent(h);
+    }
+
+    function content() {
+      if (activeTab === 'queue') return queueView();
+      if (activeTab === 'timeline') return timelineView();
+      if (activeTab === 'sim') return simView();
+      return kanbanView();
+    }
+
+    // ── 閉環看板：泳道四欄 ──
+    function kanbanView() {
+      const all = FM.ticketStore.list();
+      const pending = all.filter(t => t.status === 'pending-dispatch');
+      const dispatch = all.filter(t => t.status === 'dispatched' || t.status === 'in-progress');
+      const signoff = all.filter(t => t.status === 'done-pending-signoff');
+      const closed = all.filter(t => t.status === 'closed').slice(0, 10);
+
+      let h = `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;overflow-x:auto;">`;
+
+      // Lane 1: pending-dispatch
+      h += `<div style="border:2px solid #F39C12;border-radius:8px;padding:12px;background:#fffbf0;">
+        <div style="font-weight:bold;color:#F39C12;margin-bottom:12px;">🧑‍⚖️ 待派工核可 (${pending.length})</div>`;
+      pending.forEach(t => {
+        h += ticketCard(t);
+      });
+      h += `</div>`;
+
+      // Lane 2: dispatched + in-progress
+      h += `<div style="border:2px solid #3498DB;border-radius:8px;padding:12px;background:#f0f8ff;">
+        <div style="font-weight:bold;color:#3498DB;margin-bottom:12px;">🔧 進行中 (${dispatch.length})</div>`;
+      dispatch.forEach(t => {
+        h += ticketCard(t);
+      });
+      h += `</div>`;
+
+      // Lane 3: done-pending-signoff
+      h += `<div style="border:2px solid #E74C3C;border-radius:8px;padding:12px;background:#ffe8e8;">
+        <div style="font-weight:bold;color:#E74C3C;margin-bottom:12px;">📝 待簽核 (${signoff.length})</div>`;
+      signoff.forEach(t => {
+        h += ticketCard(t);
+      });
+      h += `</div>`;
+
+      // Lane 4: closed (recent 10)
+      h += `<div style="border:2px solid #27AE60;border-radius:8px;padding:12px;background:#f0fff0;">
+        <div style="font-weight:bold;color:#27AE60;margin-bottom:12px;">✅ 已結案 (最近 10 筆)</div>`;
+      closed.forEach(t => {
+        h += ticketCard(t);
+      });
+      h += `</div>`;
+
+      h += `</div>`;
+      return h;
+    }
+
+    function ticketCard(t) {
+      const status = {
+        'pending-dispatch': '待核可',
+        'dispatched': '已派工',
+        'in-progress': '進行中',
+        'done-pending-signoff': '待簽核',
+        'closed': '已結案',
+        'manual': '手動接管',
+        'error': '錯誤'
+      }[t.status] || t.status;
+
+      const statusColor = {
+        'pending-dispatch': '#F39C12',
+        'dispatched': '#3498DB',
+        'in-progress': '#3498DB',
+        'done-pending-signoff': '#E74C3C',
+        'closed': '#27AE60',
+        'manual': '#9B59B6',
+        'error': '#C0392B'
+      }[t.status] || '#95A5A6';
+
+      const space = FM.spaceTag ? FM.spaceTag(t.space) : t.space;
+
+      let h = `<div style="background:#fff;border:1px solid #e0e0e0;border-radius:6px;padding:10px;margin-bottom:10px;font-size:12px;">
+        <div style="font-weight:bold;color:${statusColor};margin-bottom:4px;">${esc(t.id)}</div>
+        <div style="color:#555;margin-bottom:4px;line-height:1.4;word-break:break-word;">${esc(t.msg || '')}</div>
+        <div style="color:#999;margin-bottom:6px;font-size:11px;">${esc(space)}</div>
+        <div style="display:flex;gap:4px;margin-bottom:6px;flex-wrap:wrap;justify-content:space-between;align-items:center;">
+          <div style="color:#666;"><span style="color:#999;">👤</span> ${esc(t.assignee || '未派工')}</div>
+          <span style="background:${statusColor};color:#fff;padding:2px 6px;border-radius:3px;font-size:11px;">${status}</span>
+        </div>`;
+
+      if (t.sla) {
+        h += `<div style="color:#E74C3C;font-size:11px;margin-bottom:6px;">⏰ SLA: ${esc(String(t.sla))}</div>`;
+      }
+
+      if (t.status !== 'closed' && t.status !== 'error' && t.status !== 'manual') {
+        h += `<button class="btn" style="width:100%;font-size:11px;padding:4px;" onclick="FM.workflow.takeover('${esc(t.id)}','值班主管'); render();">👤 接管</button>`;
+      }
+
+      h += `</div>`;
+      return h;
+    }
+
+    // ── 人工佇列：Gate1、Gate2 分離 ──
+    function queueView() {
+      const q = FM.workflow.queues();
+      let h = '';
+
+      // Gate 1: pending-dispatch
+      h += `<div class="card mb-4" style="border-left:4px solid #F39C12;">
+        <div class="card-header"><h4>🧑‍⚖️ Gate 1：派工確認佇列 (${q.dispatch.length})</h4></div>
+        <div class="card-body">`;
+      if (q.dispatch.length === 0) {
+        h += `<p style="text-align:center;color:#999;">無待核可項目</p>`;
+      } else {
+        q.dispatch.forEach(t => {
+          const aiSug = t.audit.find(a => a.aiSuggestion && a.actor === 'hermes-ai');
+          h += `<div style="background:#fffbf0;border:1px solid #F39C12;border-radius:6px;padding:12px;margin-bottom:12px;">
+            <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:8px;">
+              <div>
+                <div style="font-weight:bold;color:#333;">${esc(t.id)} — ${esc(t.msg || '')}</div>
+                <div style="color:#666;font-size:13px;margin-top:4px;">${esc(FM.spaceTag ? FM.spaceTag(t.space) : t.space)}</div>
+              </div>
+              <span style="background:#F39C12;color:#fff;padding:4px 8px;border-radius:4px;font-size:12px;">高風險</span>
+            </div>
+            ${aiSug ? `<div style="background:#E8F4F8;border-left:3px solid #008CD6;padding:8px;margin:8px 0;border-radius:3px;font-size:12px;color:#00396B;">
+              <strong>Hermes AI 建議：</strong> ${esc(aiSug.aiSuggestion)}</div>` : ''}
+            <button class="btn" style="width:100%;margin-top:8px;" onclick="FM.workflow.approveDispatch('${esc(t.id)}','值班主管'); render();">✅ 核可派工</button>
+          </div>`;
+        });
+      }
+      h += `</div></div>`;
+
+      // Gate 2: done-pending-signoff (分高風險/低風險)
+      const highRisk = q.signoff.filter(t => t.highRisk);
+      const lowRisk = q.signoff.filter(t => !t.highRisk);
+
+      h += `<div class="card mb-4" style="border-left:4px solid #E74C3C;">
+        <div class="card-header"><h4>📝 Gate 2：驗收簽核佇列 (${q.signoff.length})</h4></div>
+        <div class="card-body">`;
+
+      // 高風險：逐件展開
+      if (highRisk.length > 0) {
+        h += `<div style="margin-bottom:16px;">
+          <div style="font-weight:bold;color:#E74C3C;margin-bottom:12px;">⚠️ 高風險件 (${highRisk.length}) — 逐件驗收</div>`;
+        highRisk.forEach(t => {
+          const sopAudit = t.audit.find(a => a.action && a.action.includes('SOP'));
+          h += `<div style="background:#ffe8e8;border:1px solid #E74C3C;border-radius:6px;padding:12px;margin-bottom:12px;">
+            <div style="font-weight:bold;color:#333;margin-bottom:8px;">${esc(t.id)} — ${esc(t.msg || '')}</div>
+            <div style="color:#666;font-size:13px;margin-bottom:8px;">${esc(FM.spaceTag ? FM.spaceTag(t.space) : t.space)}</div>
+            ${t.sop ? `<div style="background:#fff9e6;border-left:3px solid #F39C12;padding:8px;margin:8px 0;border-radius:3px;font-size:12px;color:#7D5C0F;">
+              <strong>SOP 檢核：</strong> ${esc(t.sop)}</div>` : ''}
+            ${sopAudit ? `<div style="background:#f0f0f0;border-left:3px solid #999;padding:8px;margin:8px 0;border-radius:3px;font-size:12px;color:#333;">
+              <strong>Audit 摘要：</strong> ${esc(sopAudit.action)}</div>` : ''}
+            <div style="display:flex;gap:8px;">
+              <button class="btn ok" style="flex:1;" onclick="FM.workflow.signoff('${esc(t.id)}',true,'值班主管',''); render();">✅ 核可結案</button>
+              <button class="btn warn" style="flex:1;" onclick="(function(){const reason=prompt('請輸入退回原因:','');if(reason!==null)FM.workflow.signoff('${esc(t.id)}',false,'值班主管',reason);render();})();">↩️ 退回重修</button>
+            </div>
+          </div>`;
+        });
+        h += `</div>`;
+      }
+
+      // 低風險：checkbox 多選 + 批次核可
+      if (lowRisk.length > 0) {
+        h += `<div style="margin-bottom:16px;">
+          <div style="font-weight:bold;color:#27AE60;margin-bottom:12px;">✅ 低風險件 (${lowRisk.length}) — 批次簽核</div>`;
+        h += `<div id="lowRiskContainer" style="margin-bottom:12px;">`;
+        lowRisk.forEach(t => {
+          h += `<label style="display:block;margin-bottom:8px;padding:10px;background:#f0fff0;border:1px solid #27AE60;border-radius:6px;cursor:pointer;">
+            <input type="checkbox" class="lowRiskCheckbox" value="${esc(t.id)}" style="margin-right:8px;">
+            <span style="color:#333;">${esc(t.id)} — ${esc(t.msg || '')}</span>
+          </label>`;
+        });
+        h += `</div>`;
+        h += `<button class="btn ok" style="width:100%;" onclick="(function(){
+          const cbs=document.querySelectorAll('.lowRiskCheckbox:checked');
+          const ids=Array.from(cbs).map(cb=>cb.value);
+          if(ids.length===0){alert('請選擇至少一件');return;}
+          const n=FM.workflow.batchSignoff(ids,'值班主管');
+          alert('批次核可 '+n+' 件');
+          render();
+        })();">✅ 批次核可 (0 件)</button>`;
+        h += `</div>`;
+      }
+
+      if (q.signoff.length === 0) {
+        h += `<p style="text-align:center;color:#999;">無待簽核項目</p>`;
+      }
+
+      h += `</div></div>`;
+
+      // Error 佇列
+      h += `<div class="card" style="border-left:4px solid #C0392B;">
+        <div class="card-header"><h4>⚠️ 錯誤佇列 (${q.error.length})</h4></div>
+        <div class="card-body">`;
+      if (q.error.length === 0) {
+        h += `<p style="text-align:center;color:#999;">無錯誤項目</p>`;
+      } else {
+        q.error.forEach(t => {
+          h += `<div style="background:#ffe8e8;border:1px solid #C0392B;border-radius:6px;padding:12px;margin-bottom:12px;">
+            <div style="font-weight:bold;color:#C0392B;">${esc(t.id)} — 錯誤</div>
+            <div style="color:#666;font-size:13px;margin:4px 0;">${esc(t.msg || '')}</div>
+            <div style="color:#999;font-size:12px;margin-top:4px;">⚠️ 需人工介入</div>
+          </div>`;
+        });
+      }
+      h += `</div></div>`;
+
+      return h;
+    }
+
+    // ── Audit Timeline：選工單展開 ──
+    function timelineView() {
+      const all = FM.ticketStore.list();
+      if (all.length === 0) {
+        return `<p style="text-align:center;color:#999;">無工單紀錄</p>`;
+      }
+
+      let h = `<div style="margin-bottom:16px;">
+        <label style="display:block;margin-bottom:8px;font-weight:bold;">選擇工單查看完整 Audit：</label>
+        <select id="ticketSelector" onchange="render();" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;">
+          <option value="">-- 選擇工單 --</option>`;
+
+      all.forEach(t => {
+        h += `<option value="${esc(t.id)}">${esc(t.id)} — ${esc(t.msg || '')}</option>`;
+      });
+
+      h += `</select></div>`;
+
+      const selector = document.getElementById('ticketSelector');
+      const selectedId = selector ? selector.value : '';
+
+      if (selectedId) {
+        const t = FM.ticketStore.get(selectedId);
+        if (t && t.audit) {
+          h += `<div style="background:#f9f9f9;border:1px solid #ddd;border-radius:6px;padding:12px;">
+            <div style="font-weight:bold;margin-bottom:12px;">工單 ${esc(t.id)} — ${esc(t.msg || '')}</div>
+            <table class="dtable" style="width:100%;">
+              <thead>
+                <tr>
+                  <th style="width:15%;">時間</th>
+                  <th style="width:12%;">執行者</th>
+                  <th style="width:20%;">動作</th>
+                  <th style="width:26%;">AI 建議</th>
+                  <th style="width:27%;">人工決定</th>
+                </tr>
+              </thead>
+              <tbody>`;
+            t.audit.forEach(a => {
+              const isAI = a.actor === 'hermes-ai';
+              const actorColor = isAI ? '#008CD6' : '#00A94F';
+              const time = new Date(a.time).toLocaleString('zh-TW');
+              h += `<tr>
+                <td style="font-size:12px;color:#666;">${time}</td>
+                <td style="color:${actorColor};font-weight:bold;font-size:12px;">${esc(a.actor)}</td>
+                <td style="font-size:12px;color:#333;">${esc(a.action)}</td>
+                <td style="font-size:12px;color:#666;">${a.aiSuggestion ? esc(a.aiSuggestion) : '—'}</td>
+                <td style="font-size:12px;color:#666;">${a.humanDecision ? esc(a.humanDecision) : '—'}</td>
+              </tr>`;
+            });
+            h += `</tbody>
+            </table>
+          </div>`;
+        }
+      }
+
+      return h;
+    }
+
+    // ── 模擬觸發：4 顆鈕 ──
+    function simView() {
+      let h = `<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:16px;">`;
+
+      // 1. 漏水（高風險）
+      h += `<button class="btn" style="padding:16px;height:80px;font-size:14px;font-weight:bold;display:flex;align-items:center;justify-content:center;background:#E74C3C;color:#fff;border:none;border-radius:6px;cursor:pointer;" onclick="FM.addAlert({id:'SIM-'+Date.now()%100000,system:'WTR',level:'crit',space:'7-E3-WTR-01',msg:'淋浴間漏水 積水',kind:'auto',time:new Date(),status:'待指派'});setTimeout(function(){alert('✅ 高風險工單已建立，請至 Gate1 佇列核可派工');},100);render();">
+        💧 模擬漏水（高風險）
+      </button>`;
+
+      // 2. 資訊設備（低風險）
+      h += `<button class="btn" style="padding:16px;height:80px;font-size:14px;font-weight:bold;display:flex;align-items:center;justify-content:center;background:#3498DB;color:#fff;border:none;border-radius:6px;cursor:pointer;" onclick="FM.addAlert({id:'SIM-'+Date.now()%100000,system:'CCTV',level:'info',space:'7-D3-CCTV-01',msg:'檔案室攝影機畫面短暫遺失',kind:'auto',time:new Date(),status:'待指派'});setTimeout(function(){alert('✅ 低風險工單已自動派工');},100);render();">
+        🖥️ 模擬資訊設備（低風險）
+      </button>`;
+
+      // 3. 空調異常（高風險）
+      h += `<button class="btn" style="padding:16px;height:80px;font-size:14px;font-weight:bold;display:flex;align-items:center;justify-content:center;background:#E74C3C;color:#fff;border:none;border-radius:6px;cursor:pointer;" onclick="FM.addAlert({id:'SIM-'+Date.now()%100000,system:'HVAC',level:'warn',space:'7-I-HVAC-01',msg:'震波室室溫升至 26°C',kind:'auto',time:new Date(),status:'待指派'});setTimeout(function(){alert('✅ 高風險工單已建立，請至 Gate1 佇列核可派工');},100);render();">
+        🌡️ 模擬空調異常（高風險）
+      </button>`;
+
+      // 4. 清潔需求（低風險）
+      h += `<button class="btn" style="padding:16px;height:80px;font-size:14px;font-weight:bold;display:flex;align-items:center;justify-content:center;background:#3498DB;color:#fff;border:none;border-radius:6px;cursor:pointer;" onclick="FM.addAlert({id:'SIM-'+Date.now()%100000,system:'CLN',level:'info',space:'7-H-RCP-01',msg:'候診區地面需清潔',kind:'auto',time:new Date(),status:'待指派'});setTimeout(function(){alert('✅ 低風險工單已自動派工');},100);render();">
+        🧹 模擬清潔需求（低風險）
+      </button>`;
+
+      h += `</div>`;
+      return h;
+    }
+
+    // ========================================================================
+    // 自動刷新 + 生命週期管理
+    // ========================================================================
+    FM.workflowTimer = setInterval(render, 2000);
+    window.addEventListener('beforeunload', function () {
+      if (FM.workflowTimer) clearInterval(FM.workflowTimer);
+    });
+
+    render();
+  </script>
+</body>
+</html>

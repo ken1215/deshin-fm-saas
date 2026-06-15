@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>現況佈局檢視 — 德新行政管理平台</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js"></script>
+  <script src="../assets/fm-events.js"></script>
+  <script src="../assets/fm-tickets.js"></script>
+  <script src="../assets/fm-workflow.js"></script>
+</head>
+<body>
+  <script>
+    /* ═══════════════════════════════════════════════════════════════════════════════
+       現況佈局檢視 — 放大版樓層平面 + 設備點位 + 篩選器
+       ═══════════════════════════════════════════════════════════════════════════════ */
+
+    FM.renderShell('layout', '現況佈局檢視');
+
+    /* ─────────────────────────────────────────────────────────────────────────────── */
+    /* 1. 子系統點位資料層 (FM.layoutDevices) — 資料驅動                              */
+    /* ─────────────────────────────────────────────────────────────────────────────── */
+    FM.layoutDevices = {
+      // 區域座標及尺寸 (對應 index.html 五區佈局，單位為放大後 viewBox)
+      // 放大倍率：1000→2000 寬，460→920 高 (2x)
+      areas: {
+        A: { name: '接待門診', x: 80, y: 80, w: 400, h: 340, color: '#00E676' },
+        B: { name: '物理治療', x: 80, y: 476, w: 400, h: 340, color: '#FFC107' },
+        C: { name: '運動訓練', x: 524, y: 80, w: 392, h: 736, color: '#FF5252' },
+        D: { name: '後勤行政', x: 960, y: 80, w: 452, h: 340, color: '#00E676' },
+        E: { name: '輔助(更衣淋浴)', x: 960, y: 476, w: 452, h: 340, color: '#00E676' }
+      },
+      // 各子系統在各區的點位數量 (按 equipment-list.md 設備清單估算)
+      deviceCounts: {
+        PWR: { A: 3, B: 2, C: 3, D: 2, E: 2 },      // 電力：16 點分配
+        HVAC: { A: 2, B: 3, C: 3, D: 2, E: 2 },     // 空調：12 點
+        AIR: { A: 2, B: 2, C: 2, D: 2, E: 1 },      // 新風空品：5 感測器
+        FIRE: { A: 8, B: 8, C: 12, D: 8, E: 4 },    // 消防：40 偵煙 + 12 偵溫 (按比例分)
+        WTR: { A: 1, B: 1, C: 1, D: 1, E: 4 },      // 給排水：8+12=20 感測點
+        LGT: { A: 4, B: 3, C: 6, D: 3, E: 3 },      // 新照明子系統：自行生成 19 點
+        ACC: { A: 3, B: 2, C: 2, D: 2, E: 2 },      // 門禁：10 讀卡機 + 10 鎖
+        CCTV: { A: 2, B: 2, C: 3, D: 2, E: 2 },     // 監控：11 攝影機
+        SEC: { A: 2, B: 1, C: 2, D: 1, E: 1 },      // 保全巡檢點
+        AST: { A: 5, B: 8, C: 12, D: 4, E: 6 }      // 資產標籤：35 標籤分配
+      }
+    };
+
+    /* ─────────────────────────────────────────────────────────────────────────────── */
+    /* 2. 隨機點位生成 + 告警/維修中狀態判斷                                           */
+    /* ─────────────────────────────────────────────────────────────────────────────── */
+    FM.generateDevicePoints = function(areaKey, systemCode, count) {
+      // 依區域尺寸，在區域內網格分佈 count 個點位
+      const area = FM.layoutDevices.areas[areaKey];
+      if (!area || count === 0) return [];
+
+      const points = [];
+      const gridCols = Math.ceil(Math.sqrt(count));
+      const gridRows = Math.ceil(count / gridCols);
+      const cellW = area.w / (gridCols + 1);
+      const cellH = area.h / (gridRows + 1);
+
+      for (let i = 0; i < count; i++) {
+        const row = Math.floor(i / gridCols);
+        const col = i % gridCols;
+        // 在格子中央加隨機偏移 (±20%)
+        const cx = area.x + (col + 1) * cellW + (Math.random() - 0.5) * cellW * 0.4;
+        const cy = area.y + (row + 1) * cellH + (Math.random() - 0.5) * cellH * 0.4;
+        const code = FM.spaces.getCode(areaKey, i + 1, systemCode, i + 1);
+
+        // 與 FM.alerts 比對，判斷狀態：告警紅 / 維修中橘 / 正常綠
+        const alertsForSpace = FM.alerts.filter(a => a.space === code);
+        const activeTickets = FM.ticketStore.active().filter(t => t.space === code);
+
+        let status = 'ok';
+        let severity = 'info';
+        if (alertsForSpace.length > 0 && !alertsForSpace[0].confirmed) {
+          status = 'alert';
+          severity = alertsForSpace[0].level;
+        } else if (activeTickets.length > 0) {
+          status = 'repair';
+        }
+
+        const color = {
+          ok: '#00E676',
+          alert: severity === 'crit' ? '#FF5252' : severity === 'warn' ? '#FFC107' : '#008CD6',
+          repair: '#FF9800'
+        }[status];
+
+        points.push({
+          code, areaKey, systemCode, x: cx, y: cy, color, status, severity,
+          alerts: alertsForSpace,
+          tickets: activeTickets,
+          mockValue: FM.getMockDeviceValue(systemCode)
+        });
+      }
+      return points;
+    };
+
+    // 依子系統生成模擬即時值
+    FM.getMockDeviceValue = function(systemCode) {
+      const mocks = {
+        PWR: () => ({ value: (Math.random() * 50 + 10).toFixed(1), unit: 'A', name: '電流' }),
+        HVAC: () => ({ value: (Math.random() * 10 + 18).toFixed(1), unit: '°C', name: '溫度' }),
+        AIR: () => ({ value: Math.floor(Math.random() * 300 + 400), unit: 'ppm', name: 'CO₂' }),
+        FIRE: () => ({ value: '正常', unit: '', name: '狀態' }),
+        WTR: () => ({ value: (Math.random() > 0.9 ? '偵測' : '乾'), unit: '', name: '漏水' }),
+        LGT: () => ({ value: Math.floor(Math.random() * 400 + 200), unit: 'lux', name: '照度' }),
+        ACC: () => ({ value: Math.random() > 0.95 ? '異常' : '上線', unit: '', name: '狀態' }),
+        CCTV: () => ({ value: Math.random() > 0.98 ? '遺失' : '正常', unit: '', name: '畫面' }),
+        SEC: () => ({ value: Math.random() > 0.95 ? '異常' : '正常', unit: '', name: '巡檢' }),
+        AST: () => ({ value: Math.random() > 0.9 ? '低電池' : '正常', unit: '', name: '標籤' })
+      };
+      return (mocks[systemCode] || (() => ({ value: '—', unit: '', name: '數值' })))();
+    };
+
+    /* ─────────────────────────────────────────────────────────────────────────────── */
+    /* 3. 篩選器邏輯                                                                   */
+    /* ─────────────────────────────────────────────────────────────────────────────── */
+    FM.layoutFilter = {
+      currentSystem: 'all'  // all / PWR / HVAC / AIR / ... / LGT
+    };
+
+    FM.setLayoutFilter = function(systemCode) {
+      FM.layoutFilter.currentSystem = systemCode;
+      FM.renderLayoutDiagram();
+    };
+
+    /* ─────────────────────────────────────────────────────────────────────────────── */
+    /* 4. 點位卡片（modal）                                                           */
+    /* ─────────────────────────────────────────────────────────────────────────────── */
+    FM.showDeviceCard = function(point) {
+      const fullName = FM.spaces.getFullName(point.code);
+      const subsysName = FM.spaces.subsystems[point.systemCode]?.name || point.systemCode;
+
+      let html = `
+        <div style="margin-bottom: 16px;">
+          <h4>${point.code}</h4>
+          <p style="color: #666; font-size: 12px; margin: 4px 0;">${fullName}</p>
+          <p style="color: #666; font-size: 12px; margin: 4px 0;">子系統：${subsysName}</p>
+        </div>
+
+        <div style="background: #f5f5f5; padding: 12px; border-radius: 6px; margin-bottom: 12px;">
+          <div style="font-size: 12px; font-weight: bold; color: #333; margin-bottom: 8px;">即時數值</div>
+          <div style="display: flex; align-items: baseline; gap: 8px;">
+            <span style="font-size: 24px; font-weight: bold; color: #0054A7;">${point.mockValue.value}</span>
+            <span style="color: #666;">${point.mockValue.unit}</span>
+            <span style="color: #999; font-size: 12px;">（${point.mockValue.name}）</span>
+          </div>
+        </div>
+
+        <div style="background: #f5f5f5; padding: 12px; border-radius: 6px; margin-bottom: 12px;">
+          <div style="font-size: 12px; font-weight: bold; color: #333; margin-bottom: 8px;">狀態</div>
+          <div style="display: inline-block; padding: 6px 12px; border-radius: 4px; background: ${point.color}20; color: ${point.color}; font-weight: bold;">
+            ${point.status === 'ok' ? '正常 🟢' : point.status === 'alert' ? '告警 🔴' : '維修中 🟠'}
+          </div>
+        </div>
+      `;
+
+      // 關聯告警
+      if (point.alerts && point.alerts.length > 0) {
+        html += `<div style="background: #fff3e0; padding: 12px; border-radius: 6px; margin-bottom: 12px; border-left: 3px solid #FF9800;">
+          <div style="font-size: 12px; font-weight: bold; color: #333; margin-bottom: 8px;">關聯告警 (${point.alerts.length})</div>`;
+        point.alerts.forEach(a => {
+          html += `<div style="font-size: 12px; color: #666; margin-bottom: 6px;">
+            <strong>${a.msg}</strong><br/>
+            <span style="font-size: 11px; color: #999;">建議：${a.aiAction}</span>
+          </div>`;
+        });
+        html += `</div>`;
+      }
+
+      // 關聯工單
+      if (point.tickets && point.tickets.length > 0) {
+        html += `<div style="background: #e8f5e9; padding: 12px; border-radius: 6px; border-left: 3px solid #4CAF50;">
+          <div style="font-size: 12px; font-weight: bold; color: #333; margin-bottom: 8px;">關聯工單 (${point.tickets.length})</div>`;
+        point.tickets.forEach(t => {
+          html += `<div style="font-size: 12px; color: #666; margin-bottom: 6px;">
+            <strong>${t.id}</strong> — ${t.status}<br/>
+            <span style="font-size: 11px; color: #999;">派給：${t.assignee || '未指派'}</span>
+          </div>`;
+        });
+        html += `</div>`;
+      }
+
+      const buttons = [
+        { label: '詳細檢視', type: 'primary', onclick: `FM.closeModal(); location.href='../modules/power.html?space=${point.code}';` },
+        { label: '關閉', type: 'secondary', onclick: 'FM.closeModal();' }
+      ];
+      FM.showModal(`點位詳情`, html, buttons);
+    };
+
+    /* ─────────────────────────────────────────────────────────────────────────────── */
+    /* 5. 主視覺渲染 — 動態 SVG 圖層 + 統計表格                                        */
+    /* ─────────────────────────────────────────────────────────────────────────────── */
+    FM.renderLayoutDiagram = function() {
+      const systemFilter = FM.layoutFilter.currentSystem;
+
+      // 生成所有點位
+      const allPoints = [];
+      Object.keys(FM.layoutDevices.areas).forEach(areaKey => {
+        Object.keys(FM.layoutDevices.deviceCounts).forEach(sysCode => {
+          const count = FM.layoutDevices.deviceCounts[sysCode][areaKey];
+          const points = FM.generateDevicePoints(areaKey, sysCode, count);
+          allPoints.push(...points);
+        });
+      });
+
+      // 篩選點位
+      const filteredPoints = systemFilter === 'all'
+        ? allPoints
+        : allPoints.filter(p => p.systemCode === systemFilter);
+
+      // 渲染 SVG（2000x920 放大版平面）
+      let svgHtml = `
+        <svg class="layout-floor-svg" viewBox="0 0 2000 920" xmlns="http://www.w3.org/2000/svg" style="background: #f5f5f5; border: 1px solid #ddd; border-radius: 6px; display: block; width: 100%; height: auto;">
+          <defs>
+            <style>
+              .area-rect { fill: none; stroke-width: 2; }
+              .area-label { font-size: 14px; font-weight: bold; fill: #333; }
+              .device-dot { cursor: pointer; transition: r 0.2s; }
+              .device-dot:hover { filter: drop-shadow(0 0 6px rgba(0,0,0,0.3)); }
+            </style>
+          </defs>
+      `;
+
+      // 繪製五區背景 + 標籤
+      Object.keys(FM.layoutDevices.areas).forEach(areaKey => {
+        const area = FM.layoutDevices.areas[areaKey];
+        svgHtml += `<rect class="area-rect" x="${area.x}" y="${area.y}" width="${area.w}" height="${area.h}" stroke="${area.color}" rx="8"/>`;
+        svgHtml += `<text class="area-label" x="${area.x + 10}" y="${area.y + 25}">${areaKey} ${area.name}</text>`;
+      });
+
+      // 繪製點位圓點
+      filteredPoints.forEach(p => {
+        svgHtml += `
+          <circle class="device-dot" cx="${p.x}" cy="${p.y}" r="6" fill="${p.color}"
+                   onclick="FM.showDeviceCard(FM.layoutFilter._lastPoints.find(pp => pp.code === '${p.code}'))"
+                   title="${p.code}" />
+        `;
+      });
+
+      svgHtml += `</svg>`;
+
+      // 更新 SVG 容器
+      const svgBox = document.getElementById('layout-diagram-svg');
+      if (svgBox) svgBox.innerHTML = svgHtml;
+
+      // 暫存點位供 modal 使用
+      FM.layoutFilter._lastPoints = filteredPoints;
+
+      // 更新統計表格
+      FM.renderLayoutStats(filteredPoints);
+    };
+
+    /* ─────────────────────────────────────────────────────────────────────────────── */
+    /* 6. 統計表格 — 各區點位數 / 告警數 / 維修中                                      */
+    /* ─────────────────────────────────────────────────────────────────────────────── */
+    FM.renderLayoutStats = function(points) {
+      const statsBox = document.getElementById('layout-stats-table');
+      if (!statsBox) return;
+
+      const systemFilter = FM.layoutFilter.currentSystem;
+      const areaKeys = ['A', 'B', 'C', 'D', 'E'];
+
+      let html = `<table class="dtable" style="width: 100%; margin-top: 10px;">
+        <thead>
+          <tr>
+            <th>區域</th>
+            <th>點位數</th>
+            <th>告警</th>
+            <th>維修中</th>
+            <th>狀態</th>
+          </tr>
+        </thead>
+        <tbody>
+      `;
+
+      areaKeys.forEach(areaKey => {
+        const areaPoints = points.filter(p => p.areaKey === areaKey);
+        const alertCount = areaPoints.filter(p => p.status === 'alert').length;
+        const repairCount = areaPoints.filter(p => p.status === 'repair').length;
+        const okCount = areaPoints.filter(p => p.status === 'ok').length;
+
+        const statusColor = alertCount > 0 ? '#FF5252' : repairCount > 0 ? '#FF9800' : '#00E676';
+        const statusText = alertCount > 0 ? '異常' : repairCount > 0 ? '維修中' : '正常';
+
+        html += `<tr>
+          <td><strong>${areaKey} ${FM.layoutDevices.areas[areaKey].name}</strong></td>
+          <td>${areaPoints.length}</td>
+          <td><span style="color: #FF5252; font-weight: bold;">${alertCount}</span></td>
+          <td><span style="color: #FF9800; font-weight: bold;">${repairCount}</span></td>
+          <td><span style="color: ${statusColor}; font-weight: bold;">🟢${okCount} 🟠${repairCount} 🔴${alertCount}</span></td>
+        </tr>`;
+      });
+
+      html += `</tbody></table>`;
+      statsBox.innerHTML = html;
+    };
+
+    /* ─────────────────────────────────────────────────────────────────────────────── */
+    /* 7. 頁面內容組織                                                                */
+    /* ─────────────────────────────────────────────────────────────────────────────── */
+    let contentHtml = `
+      <div style="margin-bottom: 20px;">
+        <h3 class="section-title">子系統篩選</h3>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px;">
+          <button class="btn btn-primary" onclick="FM.setLayoutFilter('all')" id="filter-all">全部</button>
+          <button class="btn btn-secondary" onclick="FM.setLayoutFilter('PWR')" id="filter-PWR">⚡ 電力 PWR</button>
+          <button class="btn btn-secondary" onclick="FM.setLayoutFilter('HVAC')" id="filter-HVAC">❄️ 空調 HVAC</button>
+          <button class="btn btn-secondary" onclick="FM.setLayoutFilter('AIR')" id="filter-AIR">💨 空品 AIR</button>
+          <button class="btn btn-secondary" onclick="FM.setLayoutFilter('LGT')" id="filter-LGT">💡 照明 LGT</button>
+          <button class="btn btn-secondary" onclick="FM.setLayoutFilter('FIRE')" id="filter-FIRE">🔥 消防 FIRE</button>
+          <button class="btn btn-secondary" onclick="FM.setLayoutFilter('WTR')" id="filter-WTR">💧 給排水 WTR</button>
+          <button class="btn btn-secondary" onclick="FM.setLayoutFilter('CCTV')" id="filter-CCTV">📹 監控 CCTV</button>
+          <button class="btn btn-secondary" onclick="FM.setLayoutFilter('SEC')" id="filter-SEC">🛡️ 保全 SEC</button>
+          <button class="btn btn-secondary" onclick="FM.setLayoutFilter('ACC')" id="filter-ACC">🔐 門禁 ACC</button>
+        </div>
+      </div>
+
+      <div style="margin-bottom: 20px;">
+        <h3 class="section-title">7F 現況佈局平面 (放大版)</h3>
+        <div id="layout-diagram-svg" style="margin-bottom: 14px;">
+          <!-- SVG 動態注入 -->
+        </div>
+        <p style="font-size: 12px; color: #666; text-align: center;">💡 點擊圓點檢視點位詳情（即時值、告警、工單）</p>
+      </div>
+
+      <div style="margin-bottom: 20px;">
+        <h3 class="section-title">各區統計</h3>
+        <div id="layout-stats-table">
+          <!-- 統計表格動態注入 -->
+        </div>
+      </div>
+
+      <div style="margin-bottom: 20px;">
+        <h3 class="section-title">圖例</h3>
+        <div class="card">
+          <div class="card-body">
+            <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="width: 12px; height: 12px; border-radius: 50%; background: #00E676; display: inline-block;"></span>
+                <span style="font-size: 12px;">正常</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="width: 12px; height: 12px; border-radius: 50%; background: #FF9800; display: inline-block;"></span>
+                <span style="font-size: 12px;">維修中</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="width: 12px; height: 12px; border-radius: 50%; background: #FFC107; display: inline-block;"></span>
+                <span style="font-size: 12px;">一般告警</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="width: 12px; height: 12px; border-radius: 50%; background: #FF5252; display: inline-block;"></span>
+                <span style="font-size: 12px;">緊急告警</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    FM.loadContent(contentHtml);
+
+    // 篩選按鈕樣式更新函式
+    FM.updateFilterButtons = function(activeCode) {
+      document.querySelectorAll('[id^="filter-"]').forEach(btn => {
+        const code = btn.id.substring(7);
+        btn.className = code === activeCode ? 'btn btn-primary' : 'btn btn-secondary';
+      });
+    };
+
+    // 初次渲染
+    FM.renderLayoutDiagram();
+    FM.updateFilterButtons('all');
+
+    console.log('✅ 現況佈局檢視模組已載入');
+  </script>
+</body>
+</html>

@@ -38,6 +38,9 @@
   <div id="fm-content"></div>
 
   <script src="../assets/app.js"></script>
+  <script src="../assets/fm-events.js"></script>
+  <script src="../assets/fm-tickets.js"></script>
+  <script src="../assets/fm-workflow.js"></script>
   <script>
     FM.renderShell('cctv', '影像監控 / 櫃檯熱力分析');
 
@@ -286,7 +289,11 @@
       if (e){ e.confirmed=true;
         const container = document.createElement('div');
         const p1 = document.createElement('p');
-        p1.innerHTML = '已記錄對影像事件 <strong>' + e.type + '</strong> 的人工確認處理。';
+        const span1 = document.createElement('strong');
+        span1.textContent = e.type;
+        p1.appendChild(document.createTextNode('已記錄對影像事件 '));
+        p1.appendChild(span1);
+        p1.appendChild(document.createTextNode(' 的人工確認處理。'));
         const p2 = document.createElement('p');
         p2.style.marginTop = '8px';
         p2.style.color = '#666';
@@ -316,5 +323,5 @@
 
     render();
   </script>
-</body>
+  </body>
 </html>

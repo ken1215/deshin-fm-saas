@@ -3,7 +3,7 @@
    純前端、無 import/export、直接全域注入
    ============================================================================ */
 
-const FM = {};
+var FM = (typeof global !== 'undefined' && global.FM) || (typeof window !== 'undefined' && window.FM) || {};
 
 /* ─────────────────────────────────────────────────────────────────────────── */
 /* 1. 空間編碼主資料 — FM.spaces                                               */
@@ -69,7 +69,8 @@ FM.spaces = {
     SEC: { name: '保全排班', prefix: 'SEC', color: '#7B6079' },
     STF: { name: '在線人員', prefix: 'STF', color: '#3A7CA5' },
     RPT: { name: '同仁回報', prefix: 'RPT', color: '#E07A5F' },
-    VND: { name: '外包商管理', prefix: 'VND', color: '#6A4C93' }
+    VND: { name: '外包商管理', prefix: 'VND', color: '#6A4C93' },
+    LGT: { name: '照明', prefix: 'LGT', color: '#FFD700' }
   },
 
   // 空間碼生成：7-[Area][Room]-[Subsystem]-[Point]
@@ -161,14 +162,26 @@ FM.alerts = [
     aiAction: '開工單+安全巡檢',
     needConfirm: false,
     confirmed: true
+  },
+  {
+    id: 'ALT-006',
+    level: 'warn',
+    space: '7-B2-LGT-02',
+    time: new Date(Date.now() - 20 * 60000),
+    system: 'LGT',
+    msg: '候診區照明迴路電流異常',
+    aiAction: '派機電檢修迴路',
+    needConfirm: false,
+    confirmed: false
   }
 ];
 
 /* ─────────────────────────────────────────────────────────────────────────── */
-/* 3. 模組定義 — 16 個子系統 + 中控首頁 + 3 個管理工具（Hermes/LINE/回報）       */
+/* 3. 模組定義 — 17 個子系統 + 中控首頁 + 2 個管理工具 + 3 個管理工具（Hermes/LINE/回報）       */
 /* ─────────────────────────────────────────────────────────────────────────── */
 FM.modules = [
   { key: 'home', label: '戰情中控', icon: '📊' },
+  { key: 'layout', label: '現況佈局檢視', icon: '🗺️' },
   { key: 'power', label: '電力 PWR', icon: '⚡' },
   { key: 'hvac', label: '空調 HVAC', icon: '❄️' },
   { key: 'air', label: '新風空品 AIR', icon: '💨' },
@@ -182,7 +195,10 @@ FM.modules = [
   { key: 'cctv', label: '影像監控 CCTV', icon: '📹' },
   { key: 'security', label: '保全排班 SEC', icon: '🛡️' },
   { key: 'staff', label: '在線人員 STF', icon: '🧑‍⚕️' },
+  { key: 'lighting', label: '照明控制 LGT', icon: '💡' },
+  { key: 'sop', label: '緊急SOP', icon: '🚨' },
   { key: 'hermes', label: 'Hermes AI 主管台', icon: '🤖' },
+  { key: 'workflow', label: '閉環工單', icon: '🔁' },
   { key: 'line', label: 'LINE 推播中心', icon: '💬' },
   { key: 'report', label: '同仁回報·接收端', icon: '📥' },
   { key: 'vendor', label: '外包商管理 VND', icon: '🤝' }
@@ -308,6 +324,14 @@ FM.pushLineByAlert = function(alert) {
   return FM.pushLine(keys, `${tag} ${spaceStr}\n${alert.msg || alert.name || ''}\n建議：${alert.aiAction || '—'}`, alert.level, true);
 };
 
+/* 統一告警入口：執行期新告警一律走此處（mock 初始資料不經過、不觸發 workflow） */
+FM.addAlert = function (a) {
+  FM.alerts.unshift(a);
+  FM.pushLineByAlert(a);
+  if (FM.emit) FM.emit('alert:created', a);
+  return a;
+};
+
 /* 輕量 Toast 提示 */
 FM.toast = function(msg, level) {
   if (typeof document === 'undefined' || !document.body) return;
@@ -325,6 +349,19 @@ FM.toast = function(msg, level) {
   wrap.appendChild(t);
   setTimeout(() => t.style.opacity = '1', 10);
   setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, 3200);
+};
+
+/* HTML 轉義——防止 XSS 攻擊（確保外部或用戶輸入的字串不會被當作 HTML 執行） */
+FM.escapeHtml = function(text) {
+  if (!text) return '';
+  const map = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  };
+  return String(text).replace(/[&<>"']/g, function(c) { return map[c]; });
 };
 
 /* ─────────────────────────────────────────────────────────────────────────── */
@@ -1072,7 +1109,9 @@ FM.mockData = {
     SEC: { running: 99.0, alerts: 0 },
     STF: { running: 98.2, alerts: 1 },
     RPT: { running: 100, alerts: 0 },
-    VND: { running: 97.0, alerts: 1 }
+    VND: { running: 97.0, alerts: 1 },
+    LGT: { running: 98.0, alerts: 0 },
+    SOP: { running: 100, alerts: 0 }
   },
 
   // 每日告警趨勢
@@ -1106,7 +1145,8 @@ FM.floorZones = {
     env: { temp: 23.2, rh: 55 },
     utilization: 92,
     alerts: 0,
-    online: 8
+    online: 8,
+    lgtOn: 95
   },
   'B': {
     name: '物理治療',
@@ -1115,7 +1155,8 @@ FM.floorZones = {
     env: { temp: 22.8, rh: 52 },
     utilization: 87,
     alerts: 1,
-    online: 12
+    online: 12,
+    lgtOn: 88
   },
   'C': {
     name: '運動訓練',
@@ -1124,7 +1165,8 @@ FM.floorZones = {
     env: { temp: 24.1, rh: 58 },
     utilization: 94,
     alerts: 1,
-    online: 24
+    online: 24,
+    lgtOn: 100
   },
   'D': {
     name: '後勤行政',
@@ -1133,7 +1175,8 @@ FM.floorZones = {
     env: { temp: 23.5, rh: 50 },
     utilization: 88,
     alerts: 0,
-    online: 6
+    online: 6,
+    lgtOn: 60
   },
   'E': {
     name: '輔助(更衣淋浴)',
@@ -1142,7 +1185,8 @@ FM.floorZones = {
     env: { temp: 23.0, rh: 53 },
     utilization: 76,
     alerts: 1,
-    online: 9
+    online: 9,
+    lgtOn: 45
   }
 };
 
@@ -1198,6 +1242,12 @@ FM.zoneColor = function(zoneKey, layerType) {
            : zone.online >= 6 ? colors.ok
            : colors.cold;
 
+    case 'lighting':
+      return zone.lgtOn >= 90 ? colors.ok
+           : zone.lgtOn >= 70 ? colors.good
+           : zone.lgtOn >= 50 ? colors.warn
+           : colors.crit;
+
     default:
       return colors.ok;
   }
@@ -1208,8 +1258,8 @@ FM.switchFloorLayer = function(layerKey) {
   this.updateFloorDiagram();
 };
 
-// 戰情圖層自動輪播（空品→稼動→溫度→告警→人流 循環）
-FM.layerRotation = { timer: null, order: ['air', 'util', 'temp', 'alert', 'people'], intervalMs: 5000 };
+// 戰情圖層自動輪播（空品→稼動→溫度→照明→告警→人流 循環）
+FM.layerRotation = { timer: null, order: ['air', 'util', 'temp', 'lighting', 'alert', 'people'], intervalMs: 5000 };
 FM.startLayerRotation = function() {
   if (FM.layerRotation.timer || typeof setInterval !== 'function') return;
   FM.layerRotation.timer = setInterval(function() {
@@ -1369,6 +1419,26 @@ FM.updateLegend = function(layerType) {
         <span style="display: inline-flex; align-items: center; gap: 6px;">
           <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #FF5252;"></span>
           <span style="font-size: 12px;">壅擠 (≥20人)</span>
+        </span>
+      `;
+      break;
+    case 'lighting':
+      legendHtml = `
+        <span style="display: inline-flex; align-items: center; gap: 6px; margin-right: 16px;">
+          <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #00E676;"></span>
+          <span style="font-size: 12px;">充足 (≥90%)</span>
+        </span>
+        <span style="display: inline-flex; align-items: center; gap: 6px; margin-right: 16px;">
+          <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #66BB6A;"></span>
+          <span style="font-size: 12px;">良好 (70-90%)</span>
+        </span>
+        <span style="display: inline-flex; align-items: center; gap: 6px; margin-right: 16px;">
+          <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #FFC107;"></span>
+          <span style="font-size: 12px;">減調 (50-70%)</span>
+        </span>
+        <span style="display: inline-flex; align-items: center; gap: 6px;">
+          <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #FF5252;"></span>
+          <span style="font-size: 12px;">故障 (<50%)</span>
         </span>
       `;
       break;
@@ -1783,8 +1853,7 @@ FM.spawnEvent = function() {
     kind: 'auto',
     bornTick: FM.autoLoop.ticks
   });
-  FM.alerts.unshift(a);
-  FM.pushLineByAlert(a);
+  FM.addAlert(a);
   FM.autoLoop.stats.spawned++;
   FM.autoLoop.stats.pushed++;
   FM.autoLoopLog('🆕 ' + a.id + '｜' + a.msg + '（' + a.level + '）→ 開工單 + LINE 推播');
@@ -1795,6 +1864,7 @@ FM.spawnEvent = function() {
 FM.progressWorkOrders = function() {
   FM.alerts.forEach(a => {
     if (a.kind !== 'auto') return;
+    if (a.wfTicketId) return; // 已由 repair-loop workflow 接管生命週期
     const age = FM.autoLoop.ticks - (a.bornTick || 0);
     if (a.status === '待指派' && age >= 1) {
       a.status = '進行中';
@@ -1809,7 +1879,7 @@ FM.progressWorkOrders = function() {
     }
   });
   // 封存：完成逾 6 tick 的自動事件移除，避免無限增長
-  FM.alerts = FM.alerts.filter(a => !(a.kind === 'auto' && a.status === '完成' && (FM.autoLoop.ticks - (a.bornTick || 0)) > 6));
+  FM.alerts = FM.alerts.filter(a => !(a.kind === 'auto' && !a.wfTicketId && a.status === '完成' && (FM.autoLoop.ticks - (a.bornTick || 0)) > 6));
 };
 
 FM.autoLoopTick = function() {
@@ -1819,6 +1889,7 @@ FM.autoLoopTick = function() {
   if (FM.autoLoop.ticks % 2 === 0 && activeAuto < 6) FM.spawnEvent();
   if (FM.reportAutoProcess) FM.reportAutoProcess();   // 同仁回報自動分流
   if (FM.tickStatusSchedule) FM.tickStatusSchedule();  // 看診前簡報每日排程
+  if (FM.emit) FM.emit('autoloop:tick');
   if (typeof FM.autoLoop.onTick === 'function') { try { FM.autoLoop.onTick(); } catch (e) {} }
 };
 

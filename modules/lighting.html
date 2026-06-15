@@ -1,0 +1,912 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>照明控制 — 德新行政管理平台</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+  <script src="../assets/app.js"></script>
+  <script src="../assets/fm-events.js"></script>
+  <script src="../assets/fm-tickets.js"></script>
+  <script src="../assets/fm-workflow.js"></script>
+  <script src="../assets/fm-hcl.js"></script>
+  <script>
+    /* ========================================================================
+       照明控制 LGT 模組 — 迴路控制、情境模式、排程、能耗統計
+       ======================================================================== */
+
+    // 頁面初始化
+    FM.renderShell('lighting', '照明控制中心');
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 1. 照明迴路 Mock 資料（各區 3-5 個迴路 + cct 色溫、lux 照度）
+    // ─────────────────────────────────────────────────────────────────────────
+    const lgtData = {
+      areas: {
+        A: {
+          name: '接待門診',
+          circuits: [
+            { id: '7-A1-LGT-01', room: '掛號大廳', on: true, dimLevel: 100, power: 0.5, cct: 4000, lux: 350 },
+            { id: '7-A2-LGT-01', room: '醫師診間', on: true, dimLevel: 85, power: 0.4, cct: 4500, lux: 600 },
+            { id: '7-A3-LGT-01', room: '候診區', on: true, dimLevel: 90, power: 0.45, cct: 3500, lux: 250 }
+          ]
+        },
+        B: {
+          name: '物理治療',
+          circuits: [
+            { id: '7-B1-LGT-01', room: '震波治療室', on: true, dimLevel: 100, power: 0.6, cct: 4500, lux: 800 },
+            { id: '7-B2-LGT-01', room: '運動推傷室', on: true, dimLevel: 95, power: 0.55, cct: 4500, lux: 700 },
+            { id: '7-B3-LGT-01', room: '牽引治療室', on: false, dimLevel: 0, power: 0, cct: 4000, lux: 0 },
+            { id: '7-B4-LGT-01', room: '冷療室', on: true, dimLevel: 80, power: 0.4, cct: 4000, lux: 400 }
+          ]
+        },
+        C: {
+          name: '運動訓練',
+          circuits: [
+            { id: '7-C1-LGT-01', room: '有氧訓練區', on: true, dimLevel: 100, power: 0.8, cct: 4000, lux: 600 },
+            { id: '7-C2-LGT-01', room: '肌力訓練室', on: true, dimLevel: 100, power: 0.8, cct: 4000, lux: 600 },
+            { id: '7-C3-LGT-01', room: '矯正訓練區', on: true, dimLevel: 95, power: 0.75, cct: 4000, lux: 500 },
+            { id: '7-C4-LGT-01', room: '評測室', on: true, dimLevel: 85, power: 0.65, cct: 4500, lux: 750 }
+          ]
+        },
+        D: {
+          name: '後勤行政',
+          circuits: [
+            { id: '7-D1-LGT-01', room: '辦公室', on: true, dimLevel: 75, power: 0.35, cct: 4000, lux: 400 },
+            { id: '7-D2-LGT-01', room: '會議室', on: false, dimLevel: 0, power: 0, cct: 4000, lux: 0 },
+            { id: '7-D3-LGT-01', room: '檔案室', on: false, dimLevel: 0, power: 0, cct: 4000, lux: 0 },
+            { id: '7-D4-LGT-01', room: '物品倉庫', on: true, dimLevel: 50, power: 0.25, cct: 4000, lux: 150 }
+          ]
+        },
+        E: {
+          name: '輔助設施',
+          circuits: [
+            { id: '7-E1-LGT-01', room: '男更衣室', on: true, dimLevel: 80, power: 0.4, cct: 3000, lux: 250 },
+            { id: '7-E2-LGT-01', room: '女更衣室', on: true, dimLevel: 80, power: 0.4, cct: 3000, lux: 250 },
+            { id: '7-E3-LGT-01', room: '淋浴室', on: true, dimLevel: 85, power: 0.45, cct: 3500, lux: 300 },
+            { id: '7-E4-LGT-01', room: '冰敷室', on: true, dimLevel: 70, power: 0.35, cct: 3000, lux: 200 }
+          ]
+        }
+      },
+      // 告警樣本（不走 addAlert，直接 concat 到 FM.alerts）
+      alerts: [
+        {
+          id: 'ALT-LGT-001',
+          level: 'warn',
+          space: '7-B2-LGT-01',
+          time: new Date(Date.now() - 20 * 60000),
+          system: 'LGT',
+          msg: '運動推傷室迴路過載，調光機制已觸發',
+          aiAction: '派工檢查 LED 燈具/調光器',
+          needConfirm: false,
+          confirmed: true
+        },
+        {
+          id: 'ALT-HCL-001',
+          level: 'warn',
+          space: '7-C1-LGT-01',
+          time: new Date(Date.now() - 15 * 60000),
+          system: 'LGT',
+          msg: '有氧訓練區夜間色溫過高（5000K > 3500K 建議），藍光過量',
+          aiAction: '調降色溫至 3000-3500K 或降低照度',
+          needConfirm: false,
+          confirmed: false
+        }
+      ],
+      schedule: {
+        weekday: {
+          open: { hour: 6, min: 0, action: '全區照明開啟 80%' },
+          close: { hour: 22, min: 0, action: '逐區燈光關閉' }
+        },
+        weekend: {
+          open: { hour: 7, min: 0, action: '全區照明開啟 70%' },
+          close: { hour: 20, min: 0, action: '逐區燈光關閉' }
+        }
+      },
+      // 能耗估算（電價 3.5 元/kWh）
+      monthlyKwh: { A: 45, B: 78, C: 120, D: 30, E: 55 },
+      monthlyDimSavings: { A: 12, B: 18, C: 25, D: 8, E: 15 },
+      electricityRate: 3.5
+    };
+
+    // 初始化告警（concat 到 FM.alerts，不經 addAlert）
+    FM.alerts = FM.alerts.concat(lgtData.alerts);
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 2. Tab 切換邏輯
+    // ─────────────────────────────────────────────────────────────────────────
+    let activeTab = 'control';
+
+    function switchTab(tabKey) {
+      activeTab = tabKey;
+      renderContent();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 3. 迴路開/關 + 調光 + 色溫操作
+    // ─────────────────────────────────────────────────────────────────────────
+    window.toggleCircuit = function(circuitId) {
+      const circuit = findCircuit(circuitId);
+      if (!circuit) return;
+      circuit.on = !circuit.on;
+      circuit.dimLevel = circuit.on ? 100 : 0;
+      FM.pushLine(['eng'], `【照明控制】${circuitId} 迴路已${circuit.on ? '開啟' : '關閉'}`, 'info', true);
+      renderContent();
+    };
+
+    window.setDimLevel = function(circuitId, level) {
+      const circuit = findCircuit(circuitId);
+      if (!circuit) return;
+      circuit.dimLevel = Math.max(0, Math.min(100, level));
+      circuit.on = circuit.dimLevel > 0;
+      // 調光影響照度（按百分比）
+      const dimRatio = circuit.dimLevel / 100;
+      circuit.lux = circuit.lux ? Math.round(circuit.lux * dimRatio) : 0;
+      FM.pushLine(['eng'], `【照明控制】${circuitId} 調光至 ${circuit.dimLevel}% (${circuit.lux} lux)`, 'info', true);
+      renderContent();
+    };
+
+    window.setCCT = function(circuitId, cctValue) {
+      const circuit = findCircuit(circuitId);
+      if (!circuit) return;
+      circuit.cct = Math.max(2700, Math.min(6500, parseInt(cctValue, 10)));
+      FM.pushLine(['eng'], `【照明控制】${circuitId} 色溫調至 ${circuit.cct}K`, 'info', true);
+      renderContent();
+    };
+
+    window.setAreaGroupControl = function(areaKey, action) {
+      const area = lgtData.areas[areaKey];
+      if (!area) return;
+      if (action === 'all-on') {
+        area.circuits.forEach(c => { c.on = true; c.dimLevel = 100; });
+        FM.pushLine(['eng'], `【照明控制】${area.name}全開`, 'info', true);
+      } else if (action === 'all-off') {
+        area.circuits.forEach(c => { c.on = false; c.dimLevel = 0; });
+        FM.pushLine(['eng'], `【照明控制】${area.name}全關`, 'info', true);
+      } else if (action === 'dim-all') {
+        area.circuits.forEach(c => { c.dimLevel = Math.max(0, c.dimLevel - 20); c.on = c.dimLevel > 0; });
+        FM.pushLine(['eng'], `【照明控制】${area.name}降低調光`, 'info', true);
+      }
+      renderContent();
+    };
+
+    window.setAreaCCTGroup = function(areaKey, cctValue) {
+      const area = lgtData.areas[areaKey];
+      if (!area) return;
+      const cct = Math.max(2700, Math.min(6500, parseInt(cctValue, 10)));
+      area.circuits.forEach(c => { c.cct = cct; });
+      FM.pushLine(['eng'], `【照明控制】${area.name}色溫批調至 ${cct}K`, 'info', true);
+      renderContent();
+    };
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 4. 情境模式一鍵切換（含色溫）
+    // ─────────────────────────────────────────────────────────────────────────
+    window.applySceneMode = function(mode) {
+      Object.values(lgtData.areas).forEach(area => {
+        if (mode === 'clinic') {
+          // 門診模式：全亮 100%
+          area.circuits.forEach(c => { c.on = true; c.dimLevel = 100; });
+        } else if (mode === 'night') {
+          // 夜間模式：公共區 30%、診間關
+          area.circuits.forEach(c => {
+            if (c.room.includes('大廳') || c.room.includes('候診')) {
+              c.on = true; c.dimLevel = 30;
+            } else if (c.room.includes('診間') || c.room.includes('治療') || c.room.includes('訓練')) {
+              c.on = false; c.dimLevel = 0;
+            } else {
+              c.on = true; c.dimLevel = 30;
+            }
+          });
+        } else if (mode === 'clean') {
+          // 清潔模式：全亮 100%
+          area.circuits.forEach(c => { c.on = true; c.dimLevel = 100; });
+        } else if (mode === 'eco') {
+          // 節能模式：全區調光 60%（依日光調光）
+          area.circuits.forEach(c => { c.on = true; c.dimLevel = 60; });
+        }
+      });
+      FM.pushLine(['eng'], `【照明控制】切換到「${getModeLabel(mode)}」模式`, 'info', true);
+      renderContent();
+    };
+
+    window.applyHCLScene = function(sceneId) {
+      const scene = FM.hcl.scenes.find(s => s.id === sceneId);
+      if (!scene) return;
+      Object.values(lgtData.areas).forEach(area => {
+        area.circuits.forEach(c => {
+          c.cct = scene.cct;
+          c.dimLevel = scene.dim;
+          c.on = scene.dim > 0;
+        });
+      });
+      FM.pushLine(['eng'], `【照明控制】切換到「${scene.name}」HCL 場景 (${scene.cct}K, ${scene.dim}%)`, 'info', true);
+      renderContent();
+    };
+
+    function getModeLabel(mode) {
+      return { clinic: '門診模式', night: '夜間模式', clean: '清潔模式', eco: '節能模式' }[mode] || mode;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 5. 排程倒數
+    // ─────────────────────────────────────────────────────────────────────────
+    function getNextScheduleAction() {
+      const now = new Date();
+      const hour = now.getHours();
+      const min = now.getMinutes();
+      const isWeekday = now.getDay() >= 1 && now.getDay() <= 5;
+      const sch = isWeekday ? lgtData.schedule.weekday : lgtData.schedule.weekend;
+
+      const nextOpen = sch.open;
+      const nextClose = sch.close;
+
+      const openMins = nextOpen.hour * 60 + nextOpen.min;
+      const closeMins = nextClose.hour * 60 + nextClose.min;
+      const nowMins = hour * 60 + min;
+
+      let nextAction = null;
+      let countdownMins = 0;
+
+      if (nowMins < openMins) {
+        nextAction = { label: sch.open.action, time: `今日 ${String(nextOpen.hour).padStart(2, '0')}:${String(nextOpen.min).padStart(2, '0')}` };
+        countdownMins = openMins - nowMins;
+      } else if (nowMins < closeMins) {
+        nextAction = { label: sch.close.action, time: `今日 ${String(nextClose.hour).padStart(2, '0')}:${String(nextClose.min).padStart(2, '0')}` };
+        countdownMins = closeMins - nowMins;
+      } else {
+        nextAction = { label: sch.open.action, time: `明日 ${String(nextOpen.hour).padStart(2, '0')}:${String(nextOpen.min).padStart(2, '0')}` };
+        countdownMins = (24 * 60 - nowMins) + openMins;
+      }
+
+      return { nextAction, countdownMins };
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 6. 能耗統計計算
+    // ─────────────────────────────────────────────────────────────────────────
+    function calcEnergyStats() {
+      let totalKwh = 0, totalSavings = 0;
+      Object.keys(lgtData.monthlyKwh).forEach(areaKey => {
+        totalKwh += lgtData.monthlyKwh[areaKey];
+        totalSavings += lgtData.monthlyDimSavings[areaKey];
+      });
+      const totalCost = totalKwh * lgtData.electricityRate;
+      const savingsCost = totalSavings * lgtData.electricityRate;
+      return { totalKwh, totalSavings, totalCost, savingsCost };
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 7. KPI 卡片渲染（加入色溫、EML、晝夜合規率）
+    // ─────────────────────────────────────────────────────────────────────────
+    function calcHCLMetrics() {
+      let totalCCT = 0, totalEML = 0, onCount = 0, complianceCount = 0;
+      const now = new Date();
+      const hour = now.getHours();
+      const targetSchedule = FM.hcl.scheduleAt(hour);
+      // 動態計算目標 EML，避免使用可能有誤的預定義值
+      const targetEML = FM.hcl.estimateEML(targetSchedule.cct, targetSchedule.lux);
+
+      Object.values(lgtData.areas).forEach(area => {
+        area.circuits.forEach(c => {
+          if (c.on) {
+            totalCCT += c.cct;
+            const eml = FM.hcl.estimateEML(c.cct, c.lux);
+            totalEML += eml;
+            onCount++;
+            // 檢查是否符合當下時段要求（EML >= 目標或已關閉）
+            if (eml >= targetEML) complianceCount++;
+          }
+        });
+      });
+
+      const avgCCT = onCount > 0 ? Math.round(totalCCT / onCount) : 0;
+      const avgEML = onCount > 0 ? Math.round(totalEML / onCount) : 0;
+      const complianceRate = onCount > 0 ? Math.round((complianceCount / onCount) * 100) : 0;
+
+      return { avgCCT, avgEML, complianceRate, onCount };
+    }
+
+    function renderKPIs() {
+      let onCount = 0, totalCount = 0;
+      Object.values(lgtData.areas).forEach(area => {
+        area.circuits.forEach(c => {
+          totalCount++;
+          if (c.on) onCount++;
+        });
+      });
+
+      const avgDim = onCount > 0
+        ? Math.round(Object.values(lgtData.areas).flatMap(a => a.circuits).filter(c => c.on).reduce((sum, c) => sum + c.dimLevel, 0) / onCount)
+        : 0;
+
+      const todayKwh = Object.values(lgtData.monthlyKwh).reduce((a, b) => a + b, 0) / 30; // 日均估算
+      const alertCount = FM.alerts.filter(a => a.system === 'LGT' && !a.confirmed).length;
+      const { avgCCT, avgEML, complianceRate } = calcHCLMetrics();
+
+      return `
+        <div class="grid grid-cols-5 gap-3 mb-4">
+          <div class="kpi"><div class="kpi-icon">💡</div><div class="kpi-value">${onCount}/${totalCount}</div><div class="kpi-unit">迴路</div><div class="kpi-label">開啟中</div></div>
+          <div class="kpi"><div class="kpi-icon">🌡️</div><div class="kpi-value">${avgCCT}</div><div class="kpi-unit">K</div><div class="kpi-label">平均色溫</div></div>
+          <div class="kpi"><div class="kpi-icon">☀️</div><div class="kpi-value">${avgEML}</div><div class="kpi-unit">lux</div><div class="kpi-label">平均 EML</div></div>
+          <div class="kpi"><div class="kpi-icon">✓</div><div class="kpi-value">${complianceRate}%</div><div class="kpi-unit">達標</div><div class="kpi-label">晝夜合規</div></div>
+          <div class="kpi ${alertCount > 0 ? 'warning' : 'success'}"><div class="kpi-icon">⚠️</div><div class="kpi-value">${alertCount}</div><div class="kpi-unit">件</div><div class="kpi-label">告警</div></div>
+        </div>
+      `;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 8. 分區控制 Tab 渲染（加色溫、EML 顯示）
+    // ─────────────────────────────────────────────────────────────────────────
+    function renderControlTab() {
+      let html = '<div class="section-title">分區照明迴路控制（含人因照明）</div>';
+
+      Object.keys(lgtData.areas).forEach(areaKey => {
+        const area = lgtData.areas[areaKey];
+        const onCount = area.circuits.filter(c => c.on).length;
+        const avgAreaCCT = onCount > 0 ? Math.round(area.circuits.filter(c => c.on).reduce((s, c) => s + c.cct, 0) / onCount) : 0;
+
+        html += `
+          <div class="card" style="margin-bottom:16px;">
+            <div class="card-header">
+              <h3>${area.name} (${onCount}/${area.circuits.length} 迴路開啟) — 區色溫: ${avgAreaCCT}K</h3>
+            </div>
+            <div class="card-body">
+              <div style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">
+                <button class="btn btn-small" style="background:#1A7A4A;color:#fff;" onclick="setAreaGroupControl('${areaKey}', 'all-on')">全開</button>
+                <button class="btn btn-small" style="background:#C0392B;color:#fff;" onclick="setAreaGroupControl('${areaKey}', 'all-off')">全關</button>
+                <button class="btn btn-small btn-secondary" onclick="setAreaGroupControl('${areaKey}', 'dim-all')">降調光</button>
+                <select class="btn btn-small btn-secondary" onchange="setAreaCCTGroup('${areaKey}', this.value)">
+                  <option value="">批調色溫</option>
+                  <option value="2700">2700K 夜間護眼</option>
+                  <option value="3000">3000K 放鬆</option>
+                  <option value="3500">3500K 傍晚過渡</option>
+                  <option value="4000">4000K 標準日間</option>
+                  <option value="4500">4500K 醫療診療</option>
+                  <option value="5000">5000K 高亮度</option>
+                  <option value="5500">5500K 晨間促醒</option>
+                  <option value="6500">6500K 極晝</option>
+                </select>
+              </div>
+              <table class="dtable">
+                <thead>
+                  <tr><th>迴路</th><th>房間</th><th>狀態</th><th>調光</th><th>色溫 K</th><th>EML</th><th>操作</th></tr>
+                </thead>
+                <tbody>`;
+
+        area.circuits.forEach(circuit => {
+          const spaceTag = FM.spaceTag(circuit.id);
+          const statusBadge = circuit.on ? '<span class="badge ok">開啟</span>' : '<span class="badge info">關閉</span>';
+          const eml = FM.hcl.estimateEML(circuit.cct, circuit.lux);
+          const emlStatus = eml >= 250 ? '<span style="color:#1A7A4A;">✓</span>' : eml >= 50 ? '<span style="color:#D35400;">⚠️</span>' : '<span style="color:#C0392B;">✗</span>';
+
+          html += `
+                  <tr>
+                    <td class="font-semibold text-sm">${spaceTag}</td>
+                    <td class="text-sm">${circuit.room}</td>
+                    <td>${statusBadge}</td>
+                    <td>
+                      <input type="range" min="0" max="100" step="10" value="${circuit.dimLevel}"
+                        onchange="setDimLevel('${circuit.id}', this.value)"
+                        style="width:100px;vertical-align:middle;">
+                      <span style="margin-left:6px;font-weight:600;color:#0054A7;font-size:12px;">${circuit.dimLevel}%</span>
+                    </td>
+                    <td>
+                      <input type="range" min="2700" max="6500" step="100" value="${circuit.cct}"
+                        onchange="setCCT('${circuit.id}', this.value)"
+                        style="width:100px;vertical-align:middle;">
+                      <span style="margin-left:6px;font-weight:600;color:#D35400;font-size:12px;">${circuit.cct}K</span>
+                    </td>
+                    <td style="text-align:center;">
+                      <span style="font-weight:600;color:#008CD6;">${eml}</span><br>${emlStatus}
+                    </td>
+                    <td>
+                      <button class="btn btn-small" onclick="toggleCircuit('${circuit.id}')"
+                        style="background:${circuit.on ? '#C0392B' : '#1A7A4A'};color:#fff;">
+                        ${circuit.on ? '關' : '開'}
+                      </button>
+                    </td>
+                  </tr>`;
+        });
+
+        html += `
+                </tbody>
+              </table>
+            </div>
+          </div>`;
+      });
+
+      return html;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 9. 情境模式 Tab 渲染（含 HCL 臨床場景）
+    // ─────────────────────────────────────────────────────────────────────────
+    function renderSceneTab() {
+      const scenes = [
+        { key: 'clinic', label: '💼 門診模式', desc: '全區亮度 100%，診療室高亮' },
+        { key: 'night', label: '🌙 夜間模式', desc: '公共區 30%、診療區關閉' },
+        { key: 'clean', label: '🧹 清潔模式', desc: '全區亮度 100%，便於清掃檢查' },
+        { key: 'eco', label: '🌱 節能模式', desc: '全區調光 60%，依日光自適應' }
+      ];
+
+      let html = '<div style="margin-bottom:24px;">';
+      html += '<div class="section-title">基礎情境模式</div>';
+      html += '<div class="grid grid-cols-2 gap-3">';
+
+      scenes.forEach(scene => {
+        html += `
+          <button class="card" style="padding:16px;cursor:pointer;border:2px solid #ddd;transition:all .3s;"
+            onmouseover="this.style.borderColor='#0054A7';this.style.boxShadow='0 4px 12px rgba(0,84,167,.2)';"
+            onmouseout="this.style.borderColor='#ddd';this.style.boxShadow='none';"
+            onclick="applySceneMode('${scene.key}')">
+            <div style="font-size:24px;margin-bottom:8px;">${scene.label.split(' ')[0]}</div>
+            <div style="font-weight:600;text-align:left;color:#333;">${scene.label.substring(2)}</div>
+            <div style="font-size:12px;color:#999;margin-top:6px;text-align:left;">${scene.desc}</div>
+          </button>`;
+      });
+
+      html += '</div></div>';
+
+      // HCL 臨床場景
+      html += '<div style="margin-bottom:16px;">';
+      html += '<div class="section-title">☀️ 人因照明（HCL）臨床場景</div>';
+      html += '<div class="grid grid-cols-2 gap-3">';
+
+      FM.hcl.scenes.forEach(scene => {
+        const cs = FM.hcl.estimateCS(FM.hcl.estimateEML(scene.cct, 500)); // 粗估 500 lux 時的 CS
+        html += `
+          <button class="card" style="padding:16px;cursor:pointer;border:2px solid #D3EDFB;transition:all .3s;background:#f9fafb;"
+            onmouseover="this.style.borderColor='#008CD6';this.style.boxShadow='0 4px 12px rgba(0,140,214,.2)';"
+            onmouseout="this.style.borderColor='#D3EDFB';this.style.boxShadow='none';"
+            onclick="applyHCLScene('${scene.id}')">
+            <div style="font-weight:600;text-align:left;color:#0054A7;margin-bottom:8px;">${scene.name}</div>
+            <div style="font-size:12px;color:#666;margin-bottom:6px;text-align:left;">
+              <span style="display:inline-block;margin-right:12px;">🌡️ ${scene.cct}K</span>
+              <span style="display:inline-block;">🎚️ ${scene.dim}%</span>
+            </div>
+            <div style="font-size:12px;color:#999;text-align:left;">${scene.note}</div>
+          </button>`;
+      });
+
+      html += '</div></div>';
+
+      // 分區偏好說明
+      html += `
+        <div class="card" style="margin-top:20px;">
+          <div class="card-header"><h4>分區 HCL 偏好說明</h4></div>
+          <div class="card-body">
+            <ul style="margin:0;padding-left:20px;">
+              <li><strong>醫療區（診間、檢查室、護理站）：</strong>強調顯色指數 Ra ≥ 90、色溫 4000-5000K，保持警覺性，支援精確診斷</li>
+              <li><strong>運動訓練區：</strong>需均勻亮度、4000K 標準日間光，無頻閃，支援運動表現評估</li>
+              <li><strong>公共候診區：</strong>3500K 溫和放鬆，200-300 lux，舒緩患者焦慮感</li>
+              <li><strong>輔助設施（更衣、淋浴）：</strong>3000K 暖光，降低藍光，保護晝夜節律</li>
+              <li><strong>夜間值班：</strong>2700K 以下低藍光（<2200K），50-100 lux，避免褪黑激素抑制</li>
+            </ul>
+          </div>
+        </div>
+      `;
+
+      return html;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 10. HCL 人因照明 Tab 渲染
+    // ─────────────────────────────────────────────────────────────────────────
+    let hclAutoMode = false;
+
+    window.toggleHCLAutoMode = function() {
+      hclAutoMode = !hclAutoMode;
+      if (hclAutoMode) {
+        FM.pushLine(['eng'], '【照明控制】自動晝夜模式開啟', 'info', true);
+        applyAutoHCL();
+      } else {
+        FM.pushLine(['eng'], '【照明控制】自動晝夜模式關閉', 'info', true);
+      }
+      renderContent();
+    };
+
+    function applyAutoHCL() {
+      const now = new Date();
+      const hour = now.getHours();
+      const segment = FM.hcl.scheduleAt(hour);
+      Object.values(lgtData.areas).forEach(area => {
+        area.circuits.forEach(c => {
+          c.cct = segment.cct;
+          // 調光根據段落照度建議（粗估：500-1000 lux → 80-100%，50-200 lux → 30-50%）
+          if (segment.lux >= 500) c.dimLevel = 90;
+          else if (segment.lux >= 300) c.dimLevel = 70;
+          else if (segment.lux >= 100) c.dimLevel = 50;
+          else c.dimLevel = 30;
+          c.on = c.dimLevel > 0;
+        });
+      });
+    }
+
+    function renderHCLTab() {
+      const now = new Date();
+      const hour = now.getHours();
+      const currentSegment = FM.hcl.scheduleAt(hour);
+
+      // 晝夜曲線圖表（簡易 SVG）
+      let html = '<div class="section-title">24 小時晝夜節律曲線</div>';
+      const schedule = FM.hcl.schedule;
+      const svgWidth = 600;
+      const svgHeight = 200;
+      const padding = 30;
+
+      // 簡化曲線：用色溫和照度軌跡
+      let cctPoints = [], luxPoints = [];
+      for (let h = 0; h < 24; h += 2) {
+        const seg = FM.hcl.scheduleAt(h + 0.5);
+        const x = padding + (h / 24) * (svgWidth - 2 * padding);
+        const cctY = 200 - (seg.cct - 2700) / (6500 - 2700) * (svgHeight - 2 * padding);
+        const luxY = 200 - (seg.lux / 1000) * (svgHeight - 2 * padding);
+        cctPoints.push(`${x},${cctY}`);
+        luxPoints.push(`${x},${luxY}`);
+      }
+
+      const currentX = padding + (hour / 24) * (svgWidth - 2 * padding);
+      const svg = `
+        <svg width="${svgWidth}" height="${svgHeight}" style="border:1px solid #ddd;background:#f9fafb;margin:12px 0;">
+          <!-- 網格線 -->
+          <line x1="${padding}" y1="50" x2="${svgWidth - padding}" y2="50" stroke="#e0e0e0" stroke-dasharray="2,2"/>
+          <line x1="${padding}" y1="100" x2="${svgWidth - padding}" y2="100" stroke="#e0e0e0" stroke-dasharray="2,2"/>
+          <line x1="${padding}" y1="150" x2="${svgWidth - padding}" y2="150" stroke="#e0e0e0" stroke-dasharray="2,2"/>
+
+          <!-- 色溫曲線 (藍線) -->
+          <polyline points="${cctPoints.join(' ')}" fill="none" stroke="#0054A7" stroke-width="2"/>
+
+          <!-- 照度曲線 (綠線) -->
+          <polyline points="${luxPoints.join(' ')}" fill="none" stroke="#1A7A4A" stroke-width="2"/>
+
+          <!-- 當前時刻標線 -->
+          <line x1="${currentX}" y1="0" x2="${currentX}" y2="${svgHeight}" stroke="#D35400" stroke-width="2" stroke-dasharray="3,3"/>
+          <text x="${currentX}" y="15" font-size="12" fill="#D35400" text-anchor="middle">${hour}:00</text>
+        </svg>
+      `;
+
+      html += svg;
+      html += `
+        <div style="font-size:12px;color:#666;margin-bottom:16px;">
+          <span style="display:inline-block;margin-right:20px;">
+            <span style="display:inline-block;width:12px;height:2px;background:#0054A7;margin-right:6px;vertical-align:middle;"></span>色溫 (K)
+          </span>
+          <span style="display:inline-block;margin-right:20px;">
+            <span style="display:inline-block;width:12px;height:2px;background:#1A7A4A;margin-right:6px;vertical-align:middle;"></span>照度 (lux)
+          </span>
+          <span style="display:inline-block;">
+            <span style="display:inline-block;width:12px;height:2px;background:#D35400;margin-right:6px;vertical-align:middle;"></span>當前時刻
+          </span>
+        </div>
+      `;
+
+      // 自動晝夜模式開關
+      html += `
+        <div class="card" style="margin-bottom:16px;">
+          <div class="card-header"><h4>自動晝夜模式</h4></div>
+          <div class="card-body">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div>
+                <p class="text-muted" style="margin:0 0 8px 0;">開啟後，各區自動跟隨晝夜時段套用建議色溫和調光</p>
+                <p style="margin:0;font-size:12px;color:#999;">目前時段：<strong>${currentSegment.name}</strong> (${currentSegment.cct}K, ${currentSegment.lux} lux)</p>
+              </div>
+              <button class="btn ${hclAutoMode ? 'btn-primary' : 'btn-secondary'}" onclick="toggleHCLAutoMode()"
+                style="min-width:100px;">
+                ${hclAutoMode ? '✓ 開啟' : '○ 關閉'}
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+
+      // 目前全區統計
+      const { avgCCT, avgEML, complianceRate } = calcHCLMetrics();
+      html += `
+        <div class="section-title">全區 HCL 統計</div>
+        <div class="grid grid-cols-3 gap-3" style="margin-bottom:16px;">
+          <div class="card">
+            <div class="card-body">
+              <div class="text-muted text-sm">平均色溫</div>
+              <div style="font-size:24px;font-weight:bold;color:#D35400;">${avgCCT}K</div>
+              <div class="text-muted text-sm" style="margin-top:6px;">目標：4000-5000K</div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-body">
+              <div class="text-muted text-sm">平均 EML</div>
+              <div style="font-size:24px;font-weight:bold;color:#008CD6;">${avgEML}</div>
+              <div class="text-muted text-sm" style="margin-top:6px;">日間 ≥250, 夜間 <50</div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-body">
+              <div class="text-muted text-sm">晝夜合規率</div>
+              <div style="font-size:24px;font-weight:bold;color:#1A7A4A;">${complianceRate}%</div>
+              <div class="text-muted text-sm" style="margin-top:6px;">達標區域比例</div>
+            </div>
+          </div>
+        </div>
+      `;
+
+      // 合規檢視
+      html += `
+        <div class="section-title">代表空間合規檢視</div>
+      `;
+      const spaceExamples = [
+        { name: '診間', measures: { lux: 600, cct: 4500, ra: 90, ugr: 18 } },
+        { name: '候診區', measures: { lux: 250, cct: 3500, ra: 80, ugr: 22 } },
+        { name: '檢查室', measures: { lux: 850, cct: 4800, ra: 92, ugr: 18 } },
+        { name: '走道', measures: { lux: 280, cct: 4200, ra: 80, ugr: 22 } }
+      ];
+
+      spaceExamples.forEach(space => {
+        const comp = FM.hcl.checkCompliance(space.name, space.measures);
+        const overallColor = comp.overall === 'pass' ? '#1A7A4A' : '#C0392B';
+        const luxIcon = comp.lux === 'pass' ? '✓' : '✗';
+        const cctIcon = comp.cct === 'pass' ? '✓' : '✗';
+        const raIcon = comp.ra === 'pass' ? '✓' : '✗';
+        const ugrIcon = comp.ugr === 'pass' ? '✓' : '✗';
+
+        html += `
+          <div class="card" style="margin-bottom:8px;border-left:4px solid ${overallColor};">
+            <div class="card-body" style="display:flex;justify-content:space-between;align-items:center;">
+              <div>
+                <strong style="color:${overallColor};">${space.name}</strong>
+                <span style="margin-left:12px;font-size:12px;color:#666;">
+                  ${space.measures.lux} lux / ${space.measures.cct}K / Ra${space.measures.ra} / UGR${space.measures.ugr}
+                </span>
+              </div>
+              <div style="display:flex;gap:12px;font-size:12px;">
+                <span><span style="color:${comp.lux === 'pass' ? '#1A7A4A' : '#C0392B'};">${luxIcon}</span> lux</span>
+                <span><span style="color:${comp.cct === 'pass' ? '#1A7A4A' : '#C0392B'};">${cctIcon}</span> CCT</span>
+                <span><span style="color:${comp.ra === 'pass' ? '#1A7A4A' : '#C0392B'};">${raIcon}</span> Ra</span>
+                <span><span style="color:${comp.ugr === 'pass' ? '#1A7A4A' : '#C0392B'};">${ugrIcon}</span> UGR</span>
+              </div>
+            </div>
+          </div>
+        `;
+      });
+
+      return html;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 11. 排程 Tab 渲染
+    // ─────────────────────────────────────────────────────────────────────────
+    function renderScheduleTab() {
+      const { nextAction, countdownMins } = getNextScheduleAction();
+      const hours = Math.floor(countdownMins / 60);
+      const mins = countdownMins % 60;
+
+      const isWeekday = new Date().getDay() >= 1 && new Date().getDay() <= 5;
+      const sch = isWeekday ? lgtData.schedule.weekday : lgtData.schedule.weekend;
+
+      let html = `
+        <div class="card" style="margin-bottom:16px;">
+          <div class="card-header"><h3>下次照明動作</h3></div>
+          <div class="card-body">
+            <div style="display:flex;gap:24px;align-items:center;">
+              <div>
+                <div class="text-muted text-sm">預計動作</div>
+                <div style="font-size:18px;font-weight:bold;color:#0054A7;">${nextAction.label}</div>
+              </div>
+              <div>
+                <div class="text-muted text-sm">倒數</div>
+                <div style="font-size:32px;font-weight:bold;color:#D35400;">${hours}h ${mins}m</div>
+              </div>
+              <div>
+                <div class="text-muted text-sm">執行時間</div>
+                <div style="font-size:16px;font-weight:600;color:#333;">${nextAction.time}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+
+      html += '<div class="section-title">排程時間表</div>';
+      const rows = [
+        ['早晨開啟', `${String(sch.open.hour).padStart(2, '0')}:${String(sch.open.min).padStart(2, '0')}`, sch.open.action],
+        ['傍晚關閉', `${String(sch.close.hour).padStart(2, '0')}:${String(sch.close.min).padStart(2, '0')}`, sch.close.action]
+      ];
+
+      html += FM.createTable(['項目', '時間', '動作'], rows);
+
+      html += '<div class="text-muted text-sm" style="margin-top:12px;">＊週一~週五與週末排程不同，系統依日期自動切換。可手動操作覆寫排程。</div>';
+      return html;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 12. 能耗統計 Tab 渲染（加色溫能耗說明）
+    // ─────────────────────────────────────────────────────────────────────────
+    function renderEnergyTab() {
+      const stats = calcEnergyStats();
+
+      let html = '<div class="section-title">本月能耗統計</div>';
+
+      // 色溫與能耗說明
+      html += `
+        <div class="card" style="margin-bottom:16px;background:#f0f7ff;border-left:4px solid #008CD6;">
+          <div class="card-body">
+            <p style="margin:0 0 8px 0;"><strong>☀️ 色溫調節與能耗影響：</strong></p>
+            <ul style="margin:0;padding-left:20px;font-size:13px;color:#555;">
+              <li>暖光（2700-3500K）：LED 效率略高，相同亮度下能耗可節省 3-5%</li>
+              <li>中性光（4000-4500K）：標準醫療診療光，能耗基準</li>
+              <li>冷光（5000-6500K）：效率略低，增加 2-3% 能耗，但提升警覺性</li>
+              <li>調光 + 晝夜節律：通過降調光 + 暖光過渡，夜間可節能 30-50%</li>
+            </ul>
+          </div>
+        </div>
+      `;
+
+      const energyRows = [];
+      Object.keys(lgtData.areas).forEach(areaKey => {
+        const areaName = lgtData.areas[areaKey].name;
+        const kwh = lgtData.monthlyKwh[areaKey];
+        const dimSavings = lgtData.monthlyDimSavings[areaKey];
+        const cost = kwh * lgtData.electricityRate;
+        const savedCost = dimSavings * lgtData.electricityRate;
+        energyRows.push([
+          areaName,
+          `${kwh} kWh`,
+          `${dimSavings} kWh`,
+          `$${(savedCost).toFixed(0)}`,
+          `${(dimSavings / kwh * 100).toFixed(1)}%`
+        ]);
+      });
+
+      html += FM.createTable(
+        ['區域', '總用電', '調光節能', '節省金額', '節能率'],
+        energyRows
+      );
+
+      html += `
+        <div class="grid grid-cols-3 gap-3" style="margin-top:20px;">
+          <div class="card">
+            <div class="card-body">
+              <div class="text-muted text-sm">本月總用電</div>
+              <div style="font-size:24px;font-weight:bold;color:#D35400;">${stats.totalKwh} kWh</div>
+              <div class="text-muted text-sm" style="margin-top:6px;">電費 NT$${stats.totalCost.toFixed(0)}</div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-body">
+              <div class="text-muted text-sm">調光節能量</div>
+              <div style="font-size:24px;font-weight:bold;color:#1A7A4A;">${stats.totalSavings} kWh</div>
+              <div class="text-muted text-sm" style="margin-top:6px;">節省 NT$${stats.savingsCost.toFixed(0)}</div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-body">
+              <div class="text-muted text-sm">整體節能率</div>
+              <div style="font-size:24px;font-weight:bold;color:#0054A7;">${(stats.totalSavings / (stats.totalKwh + stats.totalSavings) * 100).toFixed(1)}%</div>
+              <div class="text-muted text-sm" style="margin-top:6px;">持續優化中</div>
+            </div>
+          </div>
+        </div>
+      `;
+
+      return html;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 12. 告警摘要（安全處理告警渲染，防止 XSS）
+    // ─────────────────────────────────────────────────────────────────────────
+    function renderAlertSummary() {
+      const lgtAlerts = FM.alerts.filter(a => a.system === 'LGT');
+      let html = '<div class="section-title">照明系統告警</div>';
+
+      if (lgtAlerts.length === 0) {
+        html += '<div class="card"><div class="card-body text-center" style="color: #1A7A4A;">✓ 目前無照明告警</div></div>';
+      } else {
+        lgtAlerts.forEach(alert => {
+          const borderColor = alert.level === 'crit' ? '#C0392B' : '#D35400';
+          const icon = alert.level === 'crit' ? '🔴' : '🟠';
+          // 使用 textContent 避免 innerHTML 造成的 XSS，透過 data 屬性存放告警ID
+          const confirmBtn = !alert.confirmed
+            ? `<button class="btn btn-danger btn-small" data-alert-id="${FM.escapeHtml(alert.id)}" onclick="handleAlertConfirm(event)">確認</button>`
+            : '';
+
+          html += `
+            <div class="card" style="border-left: 4px solid ${borderColor}; margin-bottom: 12px;">
+              <div class="card-body">
+                <div style="display: flex; justify-content: space-between; align-items: start; gap: 12px;">
+                  <div>
+                    <div style="font-weight: bold; color: ${borderColor}; font-size: 16px;">${icon} <span class="alert-msg">${FM.escapeHtml(alert.msg)}</span></div>
+                    <div style="margin-top: 8px; font-size: 14px; color: #333;">
+                      <strong>空間碼:</strong> ${FM.spaceTag(alert.space)}<br>
+                      <strong>建議:</strong> <span class="alert-action">${FM.escapeHtml(alert.aiAction)}</span>
+                    </div>
+                  </div>
+                  ${confirmBtn}
+                </div>
+              </div>
+            </div>`;
+        });
+      }
+
+      return html;
+    }
+
+    // 安全的告警確認事件處理
+    window.handleAlertConfirm = function(event) {
+      const alertId = event.target.getAttribute('data-alert-id');
+      if (alertId) {
+        FM.confirmAlert(alertId);
+      }
+    };
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Helper：查找迴路
+    // ─────────────────────────────────────────────────────────────────────────
+    function findCircuit(circuitId) {
+      for (const area of Object.values(lgtData.areas)) {
+        const circuit = area.circuits.find(c => c.id === circuitId);
+        if (circuit) return circuit;
+      }
+      return null;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 主渲染函式
+    // ─────────────────────────────────────────────────────────────────────────
+    function renderContent() {
+      let html = renderKPIs();
+
+      // Tab 導覽
+      html += `
+        <div style="display: flex; gap: 12px; margin-bottom: 20px; border-bottom: 1px solid #ddd; padding-bottom: 0; flex-wrap: wrap;">
+          <button class="btn ${activeTab === 'control' ? 'btn-primary' : 'btn-secondary'} btn-small"
+                  onclick="switchTab('control')" style="border-bottom: ${activeTab === 'control' ? '3px solid #008CD6' : 'none'};">
+            💡 分區控制
+          </button>
+          <button class="btn ${activeTab === 'scene' ? 'btn-primary' : 'btn-secondary'} btn-small"
+                  onclick="switchTab('scene')" style="border-bottom: ${activeTab === 'scene' ? '3px solid #008CD6' : 'none'};">
+            🎭 情境模式
+          </button>
+          <button class="btn ${activeTab === 'hcl' ? 'btn-primary' : 'btn-secondary'} btn-small"
+                  onclick="switchTab('hcl')" style="border-bottom: ${activeTab === 'hcl' ? '3px solid #008CD6' : 'none'};">
+            ☀️ 人因照明
+          </button>
+          <button class="btn ${activeTab === 'schedule' ? 'btn-primary' : 'btn-secondary'} btn-small"
+                  onclick="switchTab('schedule')" style="border-bottom: ${activeTab === 'schedule' ? '3px solid #008CD6' : 'none'};">
+            ⏰ 排程
+          </button>
+          <button class="btn ${activeTab === 'energy' ? 'btn-primary' : 'btn-secondary'} btn-small"
+                  onclick="switchTab('energy')" style="border-bottom: ${activeTab === 'energy' ? '3px solid #008CD6' : 'none'};">
+            ⚡ 能耗統計
+          </button>
+        </div>
+      `;
+
+      // 根據 Tab 載入對應內容
+      switch (activeTab) {
+        case 'control':
+          html += renderControlTab();
+          html += '<div style="margin-top: 24px;"></div>';
+          html += renderAlertSummary();
+          break;
+        case 'scene':
+          html += renderSceneTab();
+          break;
+        case 'hcl':
+          html += renderHCLTab();
+          break;
+        case 'schedule':
+          html += renderScheduleTab();
+          break;
+        case 'energy':
+          html += renderEnergyTab();
+          break;
+      }
+
+      FM.loadContent(html);
+    }
+
+    // 初始渲染
+    renderContent();
+  </script>
+  </body>
+</html>

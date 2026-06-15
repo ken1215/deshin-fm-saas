@@ -19,8 +19,19 @@
   <div id="fm-shell"></div>
   <div id="fm-content"></div>
   <script src="../assets/app.js"></script>
+  <script src="../assets/fm-events.js"></script>
+  <script src="../assets/fm-tickets.js"></script>
+  <script src="../assets/fm-workflow.js"></script>
   <script>
     FM.renderShell('hermes', 'Hermes AI 主管台');
+
+    /* HTML escape 防 XSS */
+    function esc(s) {
+      return String(s).replace(/[&<>"']/g, function(c) {
+        const m = {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'};
+        return m[c];
+      });
+    }
 
     const hermesCfg = {
       knowledge: [
@@ -113,8 +124,8 @@
     function drawMsgs(){
       const box=document.getElementById('hc-msgs'); if(!box) return;
       box.innerHTML=FM.hermesHistory.map(m=>{
-        if(m.role==='user') return `<div class="hc-u"><span>${m.text}</span></div>`;
-        return `<div class="hc-a"><span>${m.text}</span><div style="font-size:11px;color:#aaa;margin-top:3px;">
+        if(m.role==='user') return `<div class="hc-u"><span>${esc(m.text)}</span></div>`;
+        return `<div class="hc-a"><span>${esc(m.text)}</span><div style="font-size:11px;color:#aaa;margin-top:3px;">
           <span style="cursor:pointer;" onclick="FM.hermesFeedback('${m.id}',1);FM.toast('已記錄正向回饋','ok')">👍</span>
           <span style="cursor:pointer;margin-left:6px;" onclick="FM.hermesFeedback('${m.id}',0)">👎</span>
           <span style="cursor:pointer;margin-left:6px;color:#0054A7;" onclick="trainOne('${m.id}')">✎ 修正訓練</span></div></div>`;
@@ -236,5 +247,5 @@
     // 隨自動閉環即時更新（對話台打字時不刷新）
     FM.autoLoop.onTick = function(){ if(tab==='brief'||tab==='queue') render(); };
   </script>
-</body>
+  </body>
 </html>

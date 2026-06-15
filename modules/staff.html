@@ -10,6 +10,9 @@
   <div id="fm-shell"></div>
   <div id="fm-content"></div>
   <script src="../assets/app.js"></script>
+  <script src="../assets/fm-events.js"></script>
+  <script src="../assets/fm-tickets.js"></script>
+  <script src="../assets/fm-workflow.js"></script>
   <script>
     FM.renderShell('staff', '即時在線人員管理');
 
@@ -104,5 +107,5 @@
     function push(id){const a=stf.alerts.find(x=>x.id===id);if(a){FM.pushLineByAlert({level:a.level,space:a.code,msg:a.name,aiAction:a.aiAction});}}
     render();
   </script>
-</body>
+  </body>
 </html>
