@@ -49,7 +49,7 @@
     // ============================================================================
     const camData = {
       cameras: [
-        { id:'7-A1-CCTV-01', name:'迎賓大廳', online:true, people:8, max:20, event:null,
+        { id:'7-A1-CCTV-01', name:'迎賓大廳', online:true, people:8, max:20, event:'暴力事件',
           blobs:[[20,55,12,28],[42,48,11,26],[63,58,12,30],[78,50,10,24]] },
         { id:'7-A2-CCTV-02', name:'候診休息區', online:true, people:14, max:18, event:'滯留',
           blobs:[[12,50,11,26],[30,55,11,28],[46,48,10,24],[60,52,11,27],[75,56,12,29]] },
@@ -57,7 +57,7 @@
           blobs:[[30,52,12,28],[52,50,11,26],[70,55,11,27]] },
         { id:'7-C1-CCTV-04', name:'運動訓練區', online:true, people:9, max:25, event:'跌倒偵測',
           blobs:[[18,40,14,38],[44,55,12,28],[68,50,11,26]] },
-        { id:'7-B2-CCTV-05', name:'物理治療區', online:true, people:6, max:14, event:null,
+        { id:'7-B2-CCTV-05', name:'物理治療區', online:true, people:6, max:14, event:'火災偵測',
           blobs:[[25,52,12,28],[50,50,11,26],[72,54,11,27]] },
         { id:'7-A4-CCTV-06', name:'轉診/出入口', online:false, people:0, max:10, event:null, blobs:[] },
       ],
@@ -93,13 +93,19 @@
         { id:'CCTV-E004', level:'info', code:'7-A4-CCTV-06', type:'設備巡檢',
           msg:'轉診/出入口鏡頭離線逾 30 分鐘，影像巡檢中斷',
           time: Date.now()-1900000, aiAction:'AI建議：派工檢查 CCTV-06 供電與網路，恢復影像', needConfirm:true, confirmed:false },
+        { id:'CCTV-E005', level:'crit', code:'7-B2-CCTV-05', type:'火災偵測',
+          msg:'物理治療區偵測到疑似煙霧／火焰特徵（影像 AI 火災辨識，與偵煙器交叉驗證）',
+          time: Date.now()-45000, aiAction:'AI建議：立即啟動「火災疏散」SOP、通報消防權責並撥 119、切斷該區電源；引導疏散至集合點（見緊急 SOP 應變中心）', needConfirm:true, confirmed:false },
+        { id:'CCTV-E006', level:'crit', code:'7-A1-CCTV-01', type:'暴力事件',
+          msg:'迎賓大廳偵測到疑似肢體衝突／鬥毆行為（去識別化動作辨識）',
+          time: Date.now()-30000, aiAction:'AI建議：即時通報保全與主管、必要時撥 110，保全機動到場並調閱前後影像（見緊急 SOP「醫療暴力」處理）', needConfirm:true, confirmed:false },
       ],
       privacy: [
         ['去識別化處理','即時骨架／人形框偵測，僅輸出「人數、姿態、滯留時間」統計值，不儲存可辨識人臉特徵'],
         ['影像保留天數','事件片段保留 30 天、一般影像 7 天，到期自動刪除（可依院方政策調整）'],
         ['法規依循','個人資料保護法、醫療機構電子病歷及影像管理規範；公共區域明顯處張貼監視告示'],
         ['存取控管','影像調閱需經授權並留存稽核軌跡；AI 事件僅推播分級通報，不外流原始影像'],
-        ['分區分級','診療區（B/C）採最高隱私分級，僅供安全事件（跌倒）回溯，平時不顯示即時畫面細節'],
+        ['分區分級','診療區（B/C）採最高隱私分級，僅供安全事件（跌倒／火災／暴力）回溯，平時不顯示即時畫面細節'],
       ]
     };
 
@@ -163,7 +169,7 @@
       let h = '<div class="mb-3"><h3 class="section-title">即時影像牆（去識別化人形偵測）</h3></div>';
       h += '<div class="grid grid-cols-3 gap-3" style="--responsive-cols:auto;">';
       camData.cameras.forEach(c=>{
-        const evtColor = c.event==='跌倒偵測' ? '#C0392B' : c.event==='滯留' ? '#E8730C' : '#008CD6';
+        const evtColor = c.event==='火災偵測' ? '#E74C3C' : c.event==='暴力事件' ? '#8E1B1B' : c.event==='跌倒偵測' ? '#C0392B' : c.event==='滯留' ? '#E8730C' : '#008CD6';
         let blobs = '';
         if (c.online) c.blobs.forEach(b=> blobs += `<div class="blob" style="left:${b[0]}%; top:${b[1]}%; width:${b[2]}%; height:${b[3]}%;"></div>`);
         h += `
