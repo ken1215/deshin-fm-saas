@@ -134,6 +134,31 @@
         162, 158, 125, 68
       ],
 
+      // UPS 不斷電系統機組（市電 online / 電池 battery / 旁路 bypass）
+      upsUnits: [
+        {
+          id: 'UPS-IT', code: '7-D1-PWR-UPS', name: '資訊機房 UPS',
+          status: 'online', batteryPct: 100, runtimeMin: 38, loadPct: 42,
+          inputV: 221, outputV: 220, tempC: 27, capacityKVA: 10,
+          batteryHealth: 92, batteryAgeMonths: 14, lastSelfTest: '2026-06-01', selfTestResult: '通過',
+          protected: ['掛號/批價系統', '院內伺服器', '網路核心交換器']
+        },
+        {
+          id: 'UPS-MED', code: '7-B1-PWR-UPS', name: '醫療設備 UPS',
+          status: 'online', batteryPct: 96, runtimeMin: 22, loadPct: 61,
+          inputV: 220, outputV: 220, tempC: 30, capacityKVA: 20,
+          batteryHealth: 78, batteryAgeMonths: 28, lastSelfTest: '2026-06-08', selfTestResult: '通過',
+          protected: ['震波治療儀', '超音波診斷', '生理監測設備']
+        },
+        {
+          id: 'UPS-EMG', code: '7-E1-PWR-UPS', name: '急救照明/門禁 UPS',
+          status: 'battery', batteryPct: 54, runtimeMin: 11, loadPct: 33,
+          inputV: 0, outputV: 220, tempC: 33, capacityKVA: 6,
+          batteryHealth: 65, batteryAgeMonths: 40, lastSelfTest: '2026-05-20', selfTestResult: '通過',
+          protected: ['緊急照明', '門禁系統', '通報主機']
+        }
+      ],
+
       // 告警與事件
       powerAlerts: [
         {
@@ -169,7 +194,7 @@
     /* ────────────────────────────────────────────────────────────────────── */
     /* UI 狀態與互動                                                            */
     /* ────────────────────────────────────────────────────────────────────── */
-    let currentTab = 'overview'; // 'overview', 'circuits', 'alerts', 'forecast'
+    let currentTab = 'overview'; // 'overview', 'circuits', 'ups', 'alerts', 'forecast'
 
     function switchTab(tabName) {
       currentTab = tabName;
@@ -182,6 +207,23 @@
         alert.confirmed = true;
         renderContent();
       }
+    }
+
+    // UPS 狀態中文/色碼對應
+    function upsStatusMeta(status) {
+      if (status === 'online') return { text: '市電供電', cls: 'ok', color: 'var(--color-cis-green, #00A94F)' };
+      if (status === 'battery') return { text: '電池運轉', cls: 'warn', color: '#FFC107' };
+      return { text: '旁路/異常', cls: 'crit', color: '#FF5252' };
+    }
+
+    // 觸發 UPS 自我測試（demo：記錄操作軌跡並更新測試日期）
+    function upsSelfTest(upsId) {
+      const u = powerData.upsUnits.find(x => x.id === upsId);
+      if (!u) return;
+      u.lastSelfTest = new Date().toISOString().slice(0, 10);
+      u.selfTestResult = '通過';
+      if (FM.pushLine) FM.pushLine(['eng'], '🔋 ' + u.name + '（' + u.code + '）已執行自我測試：通過', 'info', true);
+      renderContent();
     }
 
     /* ────────────────────────────────────────────────────────────────────── */
@@ -199,6 +241,9 @@
           <button class="btn btn-secondary tab-button ${currentTab === 'circuits' ? 'active' : 'inactive'}" onclick="switchTab('circuits')">
             ⚡ 迴路表
           </button>
+          <button class="btn btn-secondary tab-button ${currentTab === 'ups' ? 'active' : 'inactive'}" onclick="switchTab('ups')">
+            🔋 UPS監控
+          </button>
           <button class="btn btn-secondary tab-button ${currentTab === 'alerts' ? 'active' : 'inactive'}" onclick="switchTab('alerts')">
             🚨 告警
           </button>
@@ -213,6 +258,8 @@
         html += renderOverview();
       } else if (currentTab === 'circuits') {
         html += renderCircuits();
+      } else if (currentTab === 'ups') {
+        html += renderUPS();
       } else if (currentTab === 'alerts') {
         html += renderAlerts();
       } else if (currentTab === 'forecast') {
@@ -330,6 +377,102 @@
         </div>
       `;
 
+      return html;
+    }
+
+    function renderUPS() {
+      const units = powerData.upsUnits;
+      let html = '';
+
+      // KPI：在線/電池運轉/最低電量/最短續航
+      const onBattery = units.filter(u => u.status === 'battery').length;
+      const abnormal = units.filter(u => u.status !== 'online').length;
+      const minBatt = Math.min(...units.map(u => u.batteryPct));
+      const minRuntime = Math.min(...units.map(u => u.runtimeMin));
+      html += `
+        <div class="grid grid-cols-4">
+          <div class="kpi ${abnormal ? 'warning' : 'success'}">
+            <div><div class="kpi-label">UPS 機組</div><div class="kpi-value">${units.length - abnormal}/${units.length}<span class="kpi-unit">在線</span></div></div>
+            <div class="kpi-icon">🔋</div>
+          </div>
+          <div class="kpi ${onBattery ? 'danger' : 'success'}">
+            <div><div class="kpi-label">電池運轉中</div><div class="kpi-value">${onBattery}<span class="kpi-unit">台</span></div></div>
+            <div class="kpi-icon">⚡</div>
+          </div>
+          <div class="kpi ${minBatt < 60 ? 'danger' : minBatt < 85 ? 'warning' : 'success'}">
+            <div><div class="kpi-label">最低電量</div><div class="kpi-value">${minBatt}<span class="kpi-unit">%</span></div></div>
+            <div class="kpi-icon">🔌</div>
+          </div>
+          <div class="kpi ${minRuntime < 15 ? 'danger' : minRuntime < 25 ? 'warning' : 'success'}">
+            <div><div class="kpi-label">最短可支撐</div><div class="kpi-value">${minRuntime}<span class="kpi-unit">分</span></div></div>
+            <div class="kpi-icon">⏱️</div>
+          </div>
+        </div>
+      `;
+
+      // 各 UPS 機組卡片
+      html += units.map(u => {
+        const st = upsStatusMeta(u.status);
+        const battClass = u.batteryPct < 60 ? 'progress-gradient-danger' : u.batteryPct < 85 ? 'progress-gradient-warning' : 'progress-gradient-success';
+        const loadClass = u.loadPct > 85 ? 'progress-gradient-danger' : u.loadPct > 70 ? 'progress-gradient-warning' : 'progress-gradient-success';
+        const healthWarn = u.batteryHealth < 70;
+        return `
+        <div class="card" style="margin-bottom:16px;border-left:4px solid ${st.color};">
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+            <h3>🔋 ${u.name} <span style="font-size:12px;color:#666;">${FM.spaceTag ? '' : ''}${u.code}</span></h3>
+            <span class="badge ${st.cls}" style="background:${st.color};color:#fff;">${st.text}</span>
+          </div>
+          <div class="card-body">
+            <div class="grid grid-cols-2" style="gap:16px;align-items:center;">
+              <div class="svg-container" style="text-align:center;">
+                ${FM.gauge ? FM.gauge(u.batteryPct) : '<div style="font-size:32px;font-weight:bold;">' + u.batteryPct + '%</div>'}
+                <div class="chart-meta">電池電量｜可支撐約 <strong>${u.runtimeMin}</strong> 分鐘</div>
+              </div>
+              <div>
+                <div class="stat-card-label" style="margin-bottom:6px;">負載率 ${u.loadPct}%（容量 ${u.capacityKVA} kVA）</div>
+                <div class="progress progress-compact" style="margin-bottom:12px;"><div class="progress-bar ${loadClass}" style="width:${u.loadPct}%"></div></div>
+                <div class="stat-card-label" style="margin-bottom:6px;">電池健康 ${u.batteryHealth}%（役齡 ${u.batteryAgeMonths} 個月）${healthWarn ? ' ⚠️ 建議更換' : ''}</div>
+                <div class="progress progress-compact"><div class="progress-bar ${u.batteryHealth < 70 ? 'progress-gradient-danger' : u.batteryHealth < 80 ? 'progress-gradient-warning' : 'progress-gradient-success'}" style="width:${u.batteryHealth}%"></div></div>
+              </div>
+            </div>
+            <div class="grid grid-cols-4" style="margin-top:14px;gap:10px;">
+              <div class="stat-card"><div class="stat-card-label">輸入電壓</div><div class="stat-card-value">${u.inputV}<span class="stat-card-unit">V</span></div></div>
+              <div class="stat-card"><div class="stat-card-label">輸出電壓</div><div class="stat-card-value">${u.outputV}<span class="stat-card-unit">V</span></div></div>
+              <div class="stat-card"><div class="stat-card-label">機體溫度</div><div class="stat-card-value">${u.tempC}<span class="stat-card-unit">°C</span></div></div>
+              <div class="stat-card"><div class="stat-card-label">上次自我測試</div><div class="stat-card-value" style="font-size:14px;">${u.lastSelfTest}<br><span style="font-size:11px;color:#00A94F;">${u.selfTestResult}</span></div></div>
+            </div>
+            <div style="margin-top:14px;font-size:13px;">
+              <strong>受保護關鍵負載：</strong>${u.protected.map(p => `<span class="badge ok" style="margin:2px;">${p}</span>`).join(' ')}
+            </div>
+            <div style="margin-top:12px;">
+              <button class="btn btn-secondary btn-small" onclick="upsSelfTest('${u.id}')">🔧 執行自我測試</button>
+            </div>
+          </div>
+        </div>
+        `;
+      }).join('');
+
+      // UPS 專屬告警（依即時狀態動態產生）
+      const upsAlerts = [];
+      units.forEach(u => {
+        if (u.status === 'battery') upsAlerts.push({ lv: 'crit', msg: `${u.name} 市電中斷，已轉電池運轉（剩餘 ${u.runtimeMin} 分鐘）`, act: '查市電來源 + 準備發電機/負載減載' });
+        if (u.batteryPct < 60) upsAlerts.push({ lv: 'warn', msg: `${u.name} 電池電量偏低（${u.batteryPct}%）`, act: '密切監看，必要時手動關機保護' });
+        if (u.batteryHealth < 70) upsAlerts.push({ lv: 'warn', msg: `${u.name} 電池老化（健康度 ${u.batteryHealth}%、役齡 ${u.batteryAgeMonths} 個月）`, act: '安排電池更換採購' });
+        if (u.tempC >= 32) upsAlerts.push({ lv: 'info', msg: `${u.name} 機體溫度偏高（${u.tempC}°C）`, act: '檢查機房散熱/通風' });
+      });
+      html += `
+        <div class="card">
+          <div class="card-header"><h3>🚨 UPS 即時告警</h3><span style="font-size:12px;color:#666;">${upsAlerts.length} 則</span></div>
+          <div class="card-body">
+            ${upsAlerts.length ? upsAlerts.map(a => `
+              <div style="display:flex;gap:10px;align-items:flex-start;padding:10px;border-left:3px solid ${a.lv === 'crit' ? '#FF5252' : a.lv === 'warn' ? '#FFC107' : '#008CD6'};background:#fafafa;margin-bottom:8px;border-radius:4px;">
+                <span>${a.lv === 'crit' ? '🔴' : a.lv === 'warn' ? '🟡' : '🔵'}</span>
+                <div><div style="font-weight:600;">${a.msg}</div><div style="font-size:12px;color:#666;">建議：${a.act}</div></div>
+              </div>
+            `).join('') : '<div style="color:#00A94F;">✅ 所有 UPS 運作正常，無告警</div>'}
+          </div>
+        </div>
+      `;
       return html;
     }
 
