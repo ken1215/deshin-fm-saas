@@ -155,6 +155,26 @@ body {
   border-left-color: var(--color-accent-green);
 }
 
+/* 側欄分區（總覽 / AIoT / 營運管理） */
+#fm-sidebar nav .nav-group {
+  padding: var(--space-xs) 0;
+}
+#fm-sidebar nav .nav-group + .nav-group {
+  border-top: 1px solid rgba(255,255,255,0.08);
+  margin-top: var(--space-xs);
+}
+#fm-sidebar nav .nav-group ul {
+  padding: var(--space-xs) 0;
+}
+#fm-sidebar nav .nav-group-title {
+  padding: var(--space-md) var(--space-lg) var(--space-xs);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  color: rgba(255,255,255,0.42);
+  text-transform: uppercase;
+}
+
 #fm-topbar {
   position: fixed;
   left: var(--sidebar-width);

@@ -179,29 +179,36 @@ FM.alerts = [
 /* ─────────────────────────────────────────────────────────────────────────── */
 /* 3. 模組定義 — 17 個子系統 + 中控首頁 + 2 個管理工具 + 3 個管理工具（Hermes/LINE/回報）       */
 /* ─────────────────────────────────────────────────────────────────────────── */
+/* 側欄分組順序與標題（renderShell 依此分區渲染） */
+FM.moduleGroups = [
+  { key: 'overview', label: '總覽' },
+  { key: 'aiot',     label: 'AIoT 智能感測與控制' },
+  { key: 'ops',      label: '營運管理' }
+];
+
 FM.modules = [
-  { key: 'home', label: '戰情中控', icon: '📊' },
-  { key: 'layout', label: '現況佈局檢視', icon: '🗺️' },
-  { key: 'power', label: '電力 PWR', icon: '⚡' },
-  { key: 'hvac', label: '空調 HVAC', icon: '❄️' },
-  { key: 'air', label: '新風空品 AIR', icon: '💨' },
-  { key: 'fire', label: '消防 FIRE', icon: '🔥' },
-  { key: 'water', label: '給排水 WTR', icon: '💧' },
-  { key: 'asset', label: '資產保固 AST', icon: '📦' },
-  { key: 'supplies', label: '耗材布草 SUP', icon: '🧼' },
-  { key: 'access', label: '門禁清潔 ACC·CLN', icon: '🔐' },
-  { key: 'scheduling', label: '排程稼動 SCH', icon: '📅' },
-  { key: 'dispatch', label: '報修派工 DSP', icon: '🚀' },
-  { key: 'cctv', label: '影像監控 CCTV', icon: '📹' },
-  { key: 'security', label: '保全排班 SEC', icon: '🛡️' },
-  { key: 'staff', label: '在線人員 STF', icon: '🧑‍⚕️' },
-  { key: 'lighting', label: '照明控制 LGT', icon: '💡' },
-  { key: 'sop', label: '緊急SOP', icon: '🚨' },
-  { key: 'hermes', label: 'Hermes AI 主管台', icon: '🤖' },
-  { key: 'workflow', label: '閉環工單', icon: '🔁' },
-  { key: 'line', label: 'LINE 推播中心', icon: '💬' },
-  { key: 'report', label: '同仁回報·接收端', icon: '📥' },
-  { key: 'vendor', label: '外包商管理 VND', icon: '🤝' }
+  { key: 'home', label: '戰情中控', icon: '📊', group: 'overview' },
+  { key: 'layout', label: '現況佈局檢視', icon: '🗺️', group: 'overview' },
+  { key: 'power', label: '電力 PWR', icon: '⚡', group: 'aiot' },
+  { key: 'hvac', label: '空調 HVAC', icon: '❄️', group: 'aiot' },
+  { key: 'air', label: '新風空品 AIR', icon: '💨', group: 'aiot' },
+  { key: 'fire', label: '消防 FIRE', icon: '🔥', group: 'aiot' },
+  { key: 'water', label: '給排水 WTR', icon: '💧', group: 'aiot' },
+  { key: 'lighting', label: '照明控制 LGT', icon: '💡', group: 'aiot' },
+  { key: 'cctv', label: '影像監控 CCTV', icon: '📹', group: 'aiot' },
+  { key: 'hermes', label: 'Hermes AI 主管台', icon: '🤖', group: 'aiot' },
+  { key: 'workflow', label: '閉環工單', icon: '🔁', group: 'aiot' },
+  { key: 'asset', label: '資產保固 AST', icon: '📦', group: 'ops' },
+  { key: 'supplies', label: '耗材布草 SUP', icon: '🧼', group: 'ops' },
+  { key: 'access', label: '門禁清潔 ACC·CLN', icon: '🔐', group: 'ops' },
+  { key: 'scheduling', label: '排程稼動 SCH', icon: '📅', group: 'ops' },
+  { key: 'dispatch', label: '報修派工 DSP', icon: '🚀', group: 'ops' },
+  { key: 'security', label: '保全排班 SEC', icon: '🛡️', group: 'ops' },
+  { key: 'staff', label: '在線人員 STF', icon: '🧑‍⚕️', group: 'ops' },
+  { key: 'sop', label: '緊急SOP', icon: '🚨', group: 'ops' },
+  { key: 'line', label: 'LINE 推播中心', icon: '💬', group: 'ops' },
+  { key: 'report', label: '同仁回報·接收端', icon: '📥', group: 'ops' },
+  { key: 'vendor', label: '外包商管理 VND', icon: '🤝', group: 'ops' }
 ];
 
 /* ─────────────────────────────────────────────────────────────────────────── */
@@ -215,27 +222,24 @@ FM.renderShell = function(activeKey, title) {
   const isInModule = window.location.pathname.includes('/modules/');
   const basePath = isInModule ? '../' : '';
 
-  // 建構側欄 HTML
-  let navHtml = '<ul>';
-  FM.modules.forEach(mod => {
+  // 建構側欄 HTML（依 FM.moduleGroups 分區，含分區標題與分隔線）
+  const renderNavItem = (mod) => {
     const isActive = mod.key === activeKey ? 'active' : '';
-    let href = '#';
-
-    if (mod.key === 'home') {
-      href = `${basePath}index.html`;
-    } else {
-      href = `${basePath}modules/${mod.key}.html`;
-    }
-
-    navHtml += `
-      <li>
-        <a href="${href}" class="${isActive}">
-          <span>${mod.icon}</span> ${mod.label}
-        </a>
-      </li>
-    `;
+    const href = mod.key === 'home' ? `${basePath}index.html` : `${basePath}modules/${mod.key}.html`;
+    return `<li><a href="${href}" class="${isActive}"><span>${mod.icon}</span> ${mod.label}</a></li>`;
+  };
+  let navHtml = '';
+  FM.moduleGroups.forEach(g => {
+    const items = FM.modules.filter(m => m.group === g.key);
+    if (!items.length) return;
+    navHtml += `<div class="nav-group"><div class="nav-group-title">${g.label}</div><ul>${items.map(renderNavItem).join('')}</ul></div>`;
   });
-  navHtml += '</ul>';
+  // 防呆：未歸類模組（無 group 或 group 不在清單）統一收到最後
+  const grouped = new Set(FM.moduleGroups.map(g => g.key));
+  const ungrouped = FM.modules.filter(m => !grouped.has(m.group));
+  if (ungrouped.length) {
+    navHtml += `<div class="nav-group"><div class="nav-group-title">其他</div><ul>${ungrouped.map(renderNavItem).join('')}</ul></div>`;
+  }
 
   // 建構頂部告警徽章
   const critCount = FM.alerts.filter(a => a.level === 'crit' && !a.confirmed).length;
