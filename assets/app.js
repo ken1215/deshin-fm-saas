@@ -263,6 +263,7 @@ FM.renderShell = function(activeKey, title) {
       <nav>${navHtml}</nav>
     </div>
     <div id="fm-topbar">
+      <button id="fm-hamburger" onclick="FM.toggleSidebar()" aria-label="選單" style="background:none;border:none;color:#fff;font-size:24px;cursor:pointer;padding:8px;display:none;">☰</button>
       <h2>${title}</h2>
       <div id="fm-topbar-status" style="display:flex; gap:8px; align-items:center; margin-left:auto;">
         <span class="alert-badge" style="background:#E6F7EE; color:#1A7A4A; cursor:pointer;" onclick="location.href='${basePath}modules/hermes.html'" title="Hermes AI 主管台"><span class="dot" style="background:#00A94F;"></span>Hermes 在線</span>
@@ -270,6 +271,7 @@ FM.renderShell = function(activeKey, title) {
       </div>
       <div id="fm-topbar-alerts">${alertsHtml}</div>
     </div>
+    <div id="fm-sidebar-overlay" onclick="FM.closeSidebar()"></div>
     <div id="fm-shell">
       <div id="fm-content">
         <!-- 各模組內容注入此 -->
@@ -282,6 +284,30 @@ FM.renderShell = function(activeKey, title) {
 
   // 注入 Hermes AI 常駐對話面板（全頁）
   if (FM.renderAgentDock) FM.renderAgentDock();
+
+  // 在導航連結上綁定 closeSidebar（點選後自動關閉）
+  document.querySelectorAll('#fm-sidebar nav a').forEach(link => {
+    const origOnclick = link.onclick;
+    link.onclick = function(e) {
+      FM.closeSidebar();
+      if (origOnclick) origOnclick.call(this, e);
+    };
+  });
+};
+
+/* RWD 漢堡抽屜控制（≤768px 時啟用） */
+FM.toggleSidebar = function() {
+  const sidebar = document.getElementById('fm-sidebar');
+  const overlay = document.getElementById('fm-sidebar-overlay');
+  if (sidebar) sidebar.classList.toggle('open');
+  if (overlay) overlay.classList.toggle('show');
+};
+
+FM.closeSidebar = function() {
+  const sidebar = document.getElementById('fm-sidebar');
+  const overlay = document.getElementById('fm-sidebar-overlay');
+  if (sidebar) sidebar.classList.remove('open');
+  if (overlay) overlay.classList.remove('show');
 };
 
 /* ─────────────────────────────────────────────────────────────────────────── */
@@ -1021,7 +1047,7 @@ FM.getAlertsForSystem = function(systemCode) {
 
 // [Helper 5] 生成表格
 FM.createTable = function(columns, rows, options = {}) {
-  let html = '<table class="dtable">';
+  let html = '<div class="table-scroll"><table class="dtable">';
 
   // 表頭
   html += '<thead><tr>';
@@ -1043,7 +1069,7 @@ FM.createTable = function(columns, rows, options = {}) {
   });
   html += '</tbody>';
 
-  html += '</table>';
+  html += '</table></div>';
   return html;
 };
 

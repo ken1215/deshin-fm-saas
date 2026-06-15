@@ -550,7 +550,7 @@
 
       const currentX = padding + (hour / 24) * (svgWidth - 2 * padding);
       const svg = `
-        <svg width="${svgWidth}" height="${svgHeight}" style="border:1px solid #ddd;background:#f9fafb;margin:12px 0;">
+        <svg width="100%" height="${svgHeight}" viewBox="0 0 ${svgWidth} ${svgHeight}" style="border:1px solid #ddd;background:#f9fafb;margin:12px 0;display:block;max-width:100%;">
           <!-- 網格線 -->
           <line x1="${padding}" y1="50" x2="${svgWidth - padding}" y2="50" stroke="#e0e0e0" stroke-dasharray="2,2"/>
           <line x1="${padding}" y1="100" x2="${svgWidth - padding}" y2="100" stroke="#e0e0e0" stroke-dasharray="2,2"/>

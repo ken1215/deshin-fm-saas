@@ -101,7 +101,7 @@
             <button class="btn btn-small" style="background:#06C755;color:#fff;border:none;" onclick="pushContract()">💬 推播採購/主管群</button>
           </div></div>`;
       } else h+=`<div style="background:#f0fff4;border-left:4px solid #00A94F;padding:12px 16px;border-radius:6px;margin-bottom:16px;"><strong style="color:#1A7A4A;">✓ 所有合約皆在效期內</strong></div>`;
-      h+='<table class="dtable"><thead><tr><th>外包商</th><th>類別</th><th>服務範圍</th><th>合約到期日</th><th>剩餘</th><th>狀態</th><th>窗口</th></tr></thead><tbody>';
+      h+='<div class="table-scroll"><table class="dtable"><thead><tr><th>外包商</th><th>類別</th><th>服務範圍</th><th>合約到期日</th><th>剩餘</th><th>狀態</th><th>窗口</th></tr></thead><tbody>';
       rows.forEach(v=>{
         const c={expired:'#C0392B',due:'#D35400',ok:'#1A7A4A'}[v.st];
         const bg={expired:'#ffebee',due:'#fff3e0',ok:''}[v.st];
@@ -110,13 +110,13 @@
           <td class="text-sm text-muted">${v.scope}</td><td class="text-sm">${vdate(v.contractDays)}</td>
           <td class="text-sm" style="color:${c};font-weight:600;">${rem}</td><td>${vbadge(v.contractDays)}</td><td class="text-sm">${v.person} · ${v.ext}</td></tr>`;
       });
-      return h+'</tbody></table>';
+      return h+'</tbody></table></div>';
     }
 
     function perfView(){
       const ranked=vendors.slice().sort((a,b)=>b.rating-a.rating);
       let h='<div class="text-muted text-sm" style="margin-bottom:12px;">依綜合評分排序（評分／SLA 達成率／平均回應時間／當月工單）</div>';
-      h+='<table class="dtable"><thead><tr><th>排名</th><th>外包商</th><th>類別</th><th>評分</th><th>SLA 達成</th><th>平均回應</th><th>當月/累計工單</th></tr></thead><tbody>';
+      h+='<div class="table-scroll"><table class="dtable"><thead><tr><th>排名</th><th>外包商</th><th>類別</th><th>評分</th><th>SLA 達成</th><th>平均回應</th><th>當月/累計工單</th></tr></thead><tbody>';
       ranked.forEach((v,i)=>{
         const slaColor=v.sla>=97?'#1A7A4A':v.sla>=93?'#D35400':'#C0392B';
         h+=`<tr><td><b>${i+1}</b></td><td class="font-semibold text-sm">${v.name}</td><td class="text-sm" style="color:${catColor[v.cat]};">${v.cat}</td>
@@ -124,17 +124,17 @@
           <td><span style="color:${slaColor};font-weight:700;">${v.sla}%</span><div style="height:5px;background:#eee;border-radius:3px;margin-top:3px;overflow:hidden;"><div style="height:100%;width:${v.sla}%;background:${slaColor};"></div></div></td>
           <td class="text-sm">${v.respHrs} 小時</td><td class="text-sm">${v.jobsMonth} / ${v.jobsDone}</td></tr>`;
       });
-      return h+'</tbody></table>';
+      return h+'</tbody></table></div>';
     }
 
     function certView(){
-      let h='<table class="dtable"><thead><tr><th>外包商</th><th>類別</th><th>證照</th><th>證照到期</th><th>狀態</th><th>保險到期</th><th>狀態</th></tr></thead><tbody>';
+      let h='<div class="table-scroll"><table class="dtable"><thead><tr><th>外包商</th><th>類別</th><th>證照</th><th>證照到期</th><th>狀態</th><th>保險到期</th><th>狀態</th></tr></thead><tbody>';
       vendors.forEach(v=>{
         h+=`<tr><td class="font-semibold text-sm">${v.name}</td><td class="text-sm" style="color:${catColor[v.cat]};">${v.cat}</td>
           <td class="text-sm">${v.licenseName}</td><td class="text-sm">${vdate(v.licenseDays)} <span class="text-muted">(${v.licenseDays<0?'逾期'+Math.abs(v.licenseDays):'剩'+v.licenseDays}天)</span></td><td>${vbadge(v.licenseDays)}</td>
           <td class="text-sm">${vdate(v.insuranceDays)} <span class="text-muted">(${v.insuranceDays<0?'逾期'+Math.abs(v.insuranceDays):'剩'+v.insuranceDays}天)</span></td><td>${vbadge(v.insuranceDays)}</td></tr>`;
       });
-      h+='</tbody></table><div class="text-muted text-sm" style="margin-top:10px;">＊公共意外責任險、勞保與專業證照為進場必要條件，到期前 30 天系統提醒並通知採購續辦。</div>';
+      h+='</tbody></table></div><div class="text-muted text-sm" style="margin-top:10px;">＊公共意外責任險、勞保與專業證照為進場必要條件，到期前 30 天系統提醒並通知採購續辦。</div>';
       return h;
     }
 

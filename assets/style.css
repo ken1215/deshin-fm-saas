@@ -393,14 +393,24 @@ body {
   font-family: 'Courier New', monospace;
 }
 
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
+  margin-bottom: var(--space-lg);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+}
+
 .dtable {
   width: 100%;
+  min-width: 800px;
   background: var(--color-white);
   border-collapse: collapse;
   border-radius: var(--radius-lg);
   overflow: hidden;
-  box-shadow: var(--shadow-md);
-  margin-bottom: var(--space-lg);
+  box-shadow: none;
+  margin-bottom: 0;
 }
 
 .dtable thead {
@@ -684,6 +694,10 @@ button, .btn {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .btn-primary {
@@ -797,7 +811,27 @@ button:disabled, .btn:disabled {
     margin-left: 0;
   }
 
-  --sidebar-width: 0;
+  #fm-hamburger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  #fm-sidebar-overlay {
+    position: fixed;
+    inset: 0;
+    background-color: rgba(0, 0, 0, 0.5);
+    z-index: 998;
+    display: none;
+  }
+
+  #fm-sidebar-overlay.show {
+    display: block;
+  }
 
   .kpi-section {
     grid-template-columns: repeat(2, 1fr);
@@ -832,9 +866,31 @@ button:disabled, .btn:disabled {
     width: 100%;
   }
 
+  .dtable {
+    min-width: 600px;
+  }
+
+  .dtable thead th {
+    padding: var(--space-sm) var(--space-md);
+    font-size: var(--font-size-xs, 11px);
+  }
+
+  .dtable tbody td {
+    padding: var(--space-sm) var(--space-md);
+    font-size: var(--font-size-sm);
+  }
+
   .tab-button {
     font-size: var(--font-size-sm);
     padding: var(--space-sm) var(--space-md);
+    min-height: 44px;
+  }
+
+  #fm-topbar h2 {
+    font-size: var(--font-size-md);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 }
 
@@ -843,6 +899,12 @@ button:disabled, .btn:disabled {
     grid-template-columns: 1fr;
   }
 
+  .grid-cols-1 { grid-template-columns: 1fr; }
+  .grid-cols-2 { grid-template-columns: 1fr; }
+  .grid-cols-3 { grid-template-columns: 1fr; }
+  .grid-cols-4 { grid-template-columns: 1fr; }
+  .grid-cols-5 { grid-template-columns: 1fr; }
+
   .kpi {
     flex-direction: column;
     text-align: center;
@@ -850,6 +912,32 @@ button:disabled, .btn:disabled {
 
   .kpi-value {
     font-size: var(--font-size-xl);
+  }
+
+  #fm-topbar h2 {
+    font-size: var(--font-size-base);
+  }
+
+  .dtable {
+    min-width: 400px;
+    font-size: var(--font-size-xs, 11px);
+  }
+
+  .dtable thead th {
+    padding: var(--space-xs) var(--space-sm);
+    font-size: 10px;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+
+  .dtable tbody td {
+    padding: var(--space-xs) var(--space-sm);
+    font-size: var(--font-size-xs, 11px);
+  }
+
+  .modal-content {
+    width: 95%;
+    max-height: 90vh;
   }
 }
 
@@ -1128,4 +1216,38 @@ button:disabled, .btn:disabled {
 
 svg {
   font-family: var(--font-family);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────── */
+/* SVG 響應式補充（戰情圖層、平面圖） */
+/* ─────────────────────────────────────────────────────────────────────────── */
+.war-svg-wrap {
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.war-floor-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+@media (max-width: 768px) {
+  .war-svg-wrap {
+    padding: var(--space-md);
+  }
+
+  .war-floor-svg {
+    min-height: 200px;
+  }
+}
+
+@media (max-width: 480px) {
+  .war-svg-wrap {
+    padding: var(--space-sm);
+  }
+
+  .war-floor-svg {
+    min-height: 150px;
+  }
 }
